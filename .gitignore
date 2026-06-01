@@ -1,0 +1,46 @@
+# Terraform state — contains secrets and infrastructure state, never commit
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variable files — contain your actual secrets and IP addresses
+*.tfvars
+!*.tfvars.example
+
+# Terraform working directory
+.terraform/
+.terraform.lock.hcl
+
+# Crash logs
+crash.log
+crash.*.log
+
+# ---- talhelper / Talos ----
+
+# age private key — the decryption half of your SOPS key pair.
+# Generate with: age-keygen -o age.key
+# Store at:      ~/.config/sops/age/keys.txt  (SOPS default, never commit)
+age.key
+
+# Unencrypted secrets — if you ever write talsecret.yaml without encrypting it,
+# make sure it never gets committed.
+talsecret.yaml
+
+# talsecret.sops.yaml is intentionally NOT ignored — it is SOPS-encrypted and
+# safe to commit to git. That's the whole point.
+
+# Generated talconfig.yaml — Terraform writes this from the template.
+# Edit templates/talconfig.yaml.tftpl + terraform.tfvars instead.
+talconfig.yaml
+
+# Generated per-node machine configs — derived from talconfig.yaml + talsecret.sops.yaml.
+# Re-created by 'terraform apply', no need to version these.
+clusterconfig/
+
+# Cluster credentials
+kubeconfig
+*.kubeconfig
+
+# Generated ArgoCD manifests — rendered from templates/, contain secrets or repo URLs
+argocd-root-app.yaml
+argocd-repo-secret.yaml

@@ -1,0 +1,384 @@
+# ============================================================
+# Locals — derived values used across resources
+# ============================================================
+
+locals {
+  # Use the VIP as the cluster endpoint when configured; otherwise fall back to
+  # the first control plane node's IP. kubectl and Talos use this address to
+  # reach the API server.
+  cluster_endpoint = var.cluster_vip != "" ? var.cluster_vip : var.control_plane_nodes[0].ip
+
+  # When there are no workers, control plane nodes must also run workloads
+  allow_scheduling_on_cp = length(var.worker_nodes) == 0
+
+  # Derive the LAN subnet CIDR from the gateway + prefix variables.
+  # cidrhost(..., 0) gives the network address (e.g. 192.168.1.1/24 → 192.168.1.0).
+  # Used for Tailscale subnet routing so the node advertises the whole home LAN.
+  node_network_cidr = "${cidrhost("${var.node_network_gateway}/${var.node_network_prefix_length}", 0)}/${var.node_network_prefix_length}"
+
+  # Parse "owner/repo" into the two parts the GitHub provider needs separately
+  github_owner = var.argocd_github_repo != "" ? split("/", var.argocd_github_repo)[0] : ""
+  github_repo  = var.argocd_github_repo != "" ? split("/", var.argocd_github_repo)[1] : ""
+
+  # SSH URL derived from the repo variable — ArgoCD uses this to clone
+  argocd_repo_url = var.argocd_github_repo != "" ? "git@github.com:${var.argocd_github_repo}.git" : ""
+}
+
+# ============================================================
+# Talos ISO — downloaded once to Proxmox storage
+# ============================================================
+#
+# The Talos image factory at factory.talos.dev builds custom ISOs based on a
+# "schematic" — a list of system extensions baked into the image. Proxmox then
+# downloads the ISO directly (you don't need to download it yourself).
+
+resource "proxmox_virtual_environment_download_file" "talos_iso" {
+  node_name    = var.proxmox_node
+  content_type = "iso"
+  datastore_id = var.proxmox_iso_datastore_id
+
+  url       = "https://factory.talos.dev/image/${var.talos_schematic_id}/${var.talos_version}/metal-amd64.iso"
+  file_name = "talos-${var.talos_version}-${substr(var.talos_schematic_id, 0, 8)}.iso"
+  overwrite = false
+}
+
+# ============================================================
+# Proxmox VMs — control plane nodes
+# ============================================================
+#
+# for_each iterates over the list of control plane configs as a map keyed by
+# node name. This is preferred over count because if you add/remove a node
+# from the middle of the list, only that node is affected — not all nodes
+# after it (which would happen with count).
+
+module "control_plane_vms" {
+  source   = "./modules/proxmox_vm"
+  for_each = { for node in var.control_plane_nodes : node.name => node }
+
+  vm_id             = each.value.vm_id
+  name              = each.value.name
+  proxmox_node      = var.proxmox_node
+  datastore_id      = var.proxmox_datastore_id
+  iso_datastore_id  = var.proxmox_iso_datastore_id
+  talos_iso_file_id = proxmox_virtual_environment_download_file.talos_iso.id
+  cpu_cores         = var.control_plane_cpu_cores
+  memory_mb         = var.control_plane_memory_mb
+  disk_gb           = var.control_plane_disk_gb
+  network_bridge    = var.network_bridge
+}
+
+# ============================================================
+# Proxmox VMs — worker nodes
+# ============================================================
+
+module "worker_vms" {
+  source   = "./modules/proxmox_vm"
+  for_each = { for node in var.worker_nodes : node.name => node }
+
+  vm_id             = each.value.vm_id
+  name              = each.value.name
+  proxmox_node      = var.proxmox_node
+  datastore_id      = var.proxmox_datastore_id
+  iso_datastore_id  = var.proxmox_iso_datastore_id
+  talos_iso_file_id = proxmox_virtual_environment_download_file.talos_iso.id
+  cpu_cores         = var.worker_cpu_cores
+  memory_mb         = var.worker_memory_mb
+  disk_gb           = var.worker_disk_gb
+  network_bridge    = var.network_bridge
+}
+
+# ============================================================
+# talconfig.yaml — written from template
+# ============================================================
+#
+# Terraform renders talconfig.yaml from the .tftpl template using your variables.
+# talhelper reads this file to know what cluster to build and what nodes to configure.
+#
+# Do not edit talconfig.yaml by hand — it will be overwritten on the next
+# 'terraform apply'. Change your values in terraform.tfvars instead.
+
+resource "local_file" "talconfig" {
+  filename        = "${path.module}/talconfig.yaml"
+  file_permission = "0644"
+
+  content = templatefile("${path.module}/templates/talconfig.yaml.tftpl", {
+    cluster_name           = var.cluster_name
+    talos_version          = var.talos_version
+    kubernetes_version     = var.kubernetes_version
+    cluster_endpoint       = local.cluster_endpoint
+    cluster_vip            = var.cluster_vip
+    install_disk           = var.install_disk
+    control_plane_nodes    = var.control_plane_nodes
+    worker_nodes           = var.worker_nodes
+    gateway                = var.node_network_gateway
+    prefix_length          = var.node_network_prefix_length
+    dns_servers            = var.dns_servers
+    allow_scheduling_on_cp = local.allow_scheduling_on_cp
+    tailscale_auth_key     = var.tailscale_auth_key
+    tailscale_subnet       = local.node_network_cidr
+  })
+}
+
+# ============================================================
+# talhelper genconfig — generate per-node Talos machine configs
+# ============================================================
+#
+# talhelper reads talconfig.yaml + talsecret.sops.yaml and writes one machine
+# config YAML per node into clusterconfig/. talhelper decrypts the SOPS file
+# automatically using the age key at ~/.config/sops/age/keys.txt (or whichever
+# key is configured in SOPS_AGE_KEY_FILE).
+#
+# triggers_replace: this resource re-runs whenever talconfig.yaml's content
+# changes. Terraform detects the change, destroys the old resource, and runs
+# the new one — causing genconfig to regenerate all machine configs.
+#
+# Prerequisite: talsecret.sops.yaml must exist in this directory.
+# Generate and encrypt it once with:
+#   talhelper gensecret > talsecret.sops.yaml
+#   sops --encrypt --in-place talsecret.sops.yaml
+# Then commit talsecret.sops.yaml — it is safe to store in git.
+
+resource "terraform_data" "talhelper_genconfig" {
+  triggers_replace = [local_file.talconfig.content]
+
+  provisioner "local-exec" {
+    command     = "talhelper genconfig --secret-file talsecret.sops.yaml --out-dir clusterconfig"
+    working_dir = path.module
+  }
+}
+
+# ============================================================
+# Apply Talos machine configs to all nodes
+# ============================================================
+#
+# talhelper gencommand apply generates the talosctl commands needed to push
+# each node's machine config via the Talos API, then we pipe them to bash.
+#
+# --extra-flags "--insecure": skips certificate verification for the first
+# apply, when nodes are in maintenance mode and don't have certificates yet.
+#
+# This step requires all VMs to be:
+#   1. Powered on and booted from the Talos ISO
+#   2. Reachable at their configured IP addresses
+#
+# If this step fails because VMs aren't ready, Terraform marks the resource as
+# tainted. Re-run 'terraform apply' once the nodes are up — it will retry.
+
+resource "terraform_data" "talos_apply" {
+  triggers_replace = [
+    terraform_data.talhelper_genconfig.id,
+    # Re-apply configs if any VM is recreated (its ID changes)
+    jsonencode({ for k, v in module.control_plane_vms : k => v.vm_id }),
+    jsonencode({ for k, v in module.worker_vms : k => v.vm_id }),
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      talhelper gencommand apply \
+        --config-file talconfig.yaml \
+        --out-dir clusterconfig \
+        --extra-flags "--insecure" \
+        | bash
+    EOT
+    working_dir = path.module
+  }
+
+  depends_on = [module.control_plane_vms, module.worker_vms]
+}
+
+# ============================================================
+# Bootstrap etcd
+# ============================================================
+#
+# Bootstrap initialises etcd on the first control plane node. This only needs
+# to happen once — Terraform tracks it in state and won't repeat it unless
+# the talos_apply resource changes (e.g. after a cluster rebuild).
+#
+# After bootstrap, the other control plane nodes join etcd automatically,
+# and workers join the cluster once their configs are applied.
+
+resource "terraform_data" "talos_bootstrap" {
+  triggers_replace = [terraform_data.talos_apply.id]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      talhelper gencommand bootstrap \
+        --config-file talconfig.yaml \
+        --out-dir clusterconfig \
+        | bash
+    EOT
+    working_dir = path.module
+  }
+
+  depends_on = [terraform_data.talos_apply]
+}
+
+# ============================================================
+# Retrieve kubeconfig
+# ============================================================
+#
+# Saves the cluster kubeconfig to ./kubeconfig in this directory.
+# Copy it to ~/.kube/config (or use KUBECONFIG=./kubeconfig) to use kubectl.
+
+resource "terraform_data" "talos_kubeconfig" {
+  triggers_replace = [terraform_data.talos_bootstrap.id]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      talhelper gencommand kubeconfig \
+        --config-file talconfig.yaml \
+        --out-dir clusterconfig \
+        --extra-flags "--merge=false" \
+        | bash -s -- ./kubeconfig
+    EOT
+    working_dir = path.module
+  }
+
+  depends_on = [terraform_data.talos_bootstrap]
+}
+
+# ============================================================
+# ArgoCD — install via Helm, then apply the root Application
+# ============================================================
+#
+# ArgoCD is installed as the final bootstrap step. From here, ArgoCD takes over
+# and deploys everything in your mono repo: Teleport, Crossplane, Backstage, etc.
+#
+# After the first apply you can reach ArgoCD with:
+#   kubectl port-forward svc/argocd-server -n argocd 8080:443 --kubeconfig kubeconfig
+# Initial admin password:
+#   kubectl get secret argocd-initial-admin-secret -n argocd \
+#     --kubeconfig kubeconfig -o jsonpath="{.data.password}" | base64 -d
+#
+# Once Teleport is deployed by ArgoCD, use Teleport for all subsequent access.
+# The port-forward is just for the initial bootstrap verification.
+
+resource "terraform_data" "argocd_install" {
+  triggers_replace = [terraform_data.talos_kubeconfig.id]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      helm repo add argo https://argoproj.github.io/argo-helm --force-update
+      kubectl create namespace argocd \
+        --kubeconfig kubeconfig \
+        --dry-run=client -o yaml \
+        | kubectl apply --kubeconfig kubeconfig -f -
+      helm upgrade --install argocd argo/argo-cd \
+        --namespace argocd \
+        --kubeconfig kubeconfig \
+        --wait --timeout 10m
+    EOT
+    working_dir = path.module
+  }
+
+  depends_on = [terraform_data.talos_kubeconfig]
+}
+
+# ============================================================
+# ArgoCD root Application — points at your mono repo
+# ============================================================
+#
+# This is the "App of Apps" entry point. ArgoCD watches the path in your mono
+# repo and deploys whatever Application manifests it finds there. Your mono repo
+# is responsible for deploying Teleport, Crossplane, Backstage, and anything else.
+#
+# If argocd_repo_url is empty, this resource is skipped — you can add the
+# Application manually via the ArgoCD UI or CLI after bootstrap.
+#
+# For a private repo, add credentials after bootstrap with:
+#   argocd repo add git@github.com:you/repo.git --ssh-private-key-path ~/.ssh/id_ed25519
+# Then re-run 'terraform apply' to create the Application.
+
+# ============================================================
+# SSH deploy key — generated by Terraform, uploaded to GitHub
+# ============================================================
+#
+# Terraform generates an ED25519 key pair. The public key is uploaded to GitHub
+# as a read-only deploy key (ArgoCD only needs to pull, never push). The private
+# key goes directly into the ArgoCD Kubernetes Secret below.
+#
+# The private key is stored in Terraform state (which is gitignored and local).
+# It never touches the filesystem as a standalone file.
+
+resource "tls_private_key" "argocd_deploy_key" {
+  count     = var.argocd_github_repo != "" ? 1 : 0
+  algorithm = "ED25519"
+}
+
+resource "github_repository_deploy_key" "argocd" {
+  count = var.argocd_github_repo != "" ? 1 : 0
+
+  title      = "ArgoCD — ${var.cluster_name}"
+  repository = local.github_repo
+  key        = tls_private_key.argocd_deploy_key[0].public_key_openssh
+  read_only  = true
+}
+
+# ============================================================
+# ArgoCD repo credential Secret
+# ============================================================
+#
+# ArgoCD discovers repo credentials by looking for Secrets labelled
+# argocd.argoproj.io/secret-type=repository in the argocd namespace.
+# The repo-server pod reads this Secret and uses the SSH key when cloning.
+# The key never leaves the cluster after this — ArgoCD pulls from GitHub
+# directly from inside the cluster.
+#
+# Applied BEFORE the root Application so ArgoCD can sync on first reconcile.
+
+resource "local_sensitive_file" "argocd_repo_secret" {
+  count    = var.argocd_github_repo != "" ? 1 : 0
+  filename = "${path.module}/argocd-repo-secret.yaml"
+
+  content = templatefile("${path.module}/templates/argocd-repo-secret.yaml.tftpl", {
+    repo_url        = local.argocd_repo_url
+    ssh_private_key = tls_private_key.argocd_deploy_key[0].private_key_openssh
+  })
+}
+
+resource "terraform_data" "argocd_repo_secret" {
+  count = var.argocd_github_repo != "" ? 1 : 0
+
+  triggers_replace = [local_sensitive_file.argocd_repo_secret[0].content]
+
+  provisioner "local-exec" {
+    command     = "kubectl apply --kubeconfig kubeconfig -f argocd-repo-secret.yaml"
+    working_dir = path.module
+  }
+
+  depends_on = [terraform_data.argocd_install]
+}
+
+# ============================================================
+# ArgoCD root Application
+# ============================================================
+
+resource "local_file" "argocd_app" {
+  count    = var.argocd_github_repo != "" ? 1 : 0
+  filename = "${path.module}/argocd-root-app.yaml"
+
+  content = templatefile("${path.module}/templates/argocd-app.yaml.tftpl", {
+    repo_url      = local.argocd_repo_url
+    repo_revision = var.argocd_repo_revision
+    app_path      = var.argocd_app_path
+  })
+}
+
+resource "terraform_data" "argocd_app" {
+  count = var.argocd_github_repo != "" ? 1 : 0
+
+  triggers_replace = [local_file.argocd_app[0].content]
+
+  provisioner "local-exec" {
+    command     = "kubectl apply --kubeconfig kubeconfig -f argocd-root-app.yaml"
+    working_dir = path.module
+  }
+
+  # Both the deploy key on GitHub AND the credential Secret in the cluster must
+  # exist before ArgoCD tries to sync — otherwise the first reconcile fails.
+  depends_on = [
+    terraform_data.argocd_install,
+    terraform_data.argocd_repo_secret,
+    github_repository_deploy_key.argocd,
+  ]
+}

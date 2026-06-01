@@ -1,0 +1,112 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — it contains secrets and environment-specific values.
+
+# ============================================================
+# Proxmox connection
+# ============================================================
+
+proxmox_endpoint     = "https://192.168.1.10:8006"   # Your Proxmox machine's LAN IP
+proxmox_api_token    = "root@pam!terraform=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+proxmox_tls_insecure = true                           # Set to false if you have a valid TLS cert
+proxmox_node         = "pve"                          # Your Proxmox node name (shown in the UI sidebar)
+
+# Storage: run 'pvesm status' on your Proxmox host to list available storage pools
+proxmox_datastore_id     = "local-lvm"  # For VM disks  (must support 'images' content type)
+proxmox_iso_datastore_id = "local"      # For ISO files (must support 'iso'    content type)
+
+# ============================================================
+# Talos image
+# ============================================================
+
+talos_version = "v1.9.5"
+
+# Generate your schematic at https://factory.talos.dev/
+# Add 'siderolabs/qemu-guest-agent' at minimum for Proxmox.
+# The ID below includes: qemu-guest-agent only.
+talos_schematic_id = "ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515"
+
+# ============================================================
+# Cluster definition
+# ============================================================
+
+cluster_name       = "homelab"
+kubernetes_version = "v1.32.3"
+
+# VIP for the Kubernetes API server — floats between healthy control plane nodes.
+# Only useful with 3+ control planes. Leave empty for a single control plane.
+cluster_vip = ""
+# cluster_vip = "192.168.1.100"  # Uncomment and set for HA
+
+# Disk Talos installs to. /dev/vda is the virtio disk on Proxmox.
+install_disk = "/dev/vda"
+
+# Control plane nodes — adjust IPs and VM IDs to match your LAN and Proxmox setup
+control_plane_nodes = [
+  { name = "cp-0", ip = "192.168.1.110", vm_id = 110 },
+  # Uncomment below for a 3-node HA control plane (etcd needs an odd number):
+  # { name = "cp-1", ip = "192.168.1.111", vm_id = 111 },
+  # { name = "cp-2", ip = "192.168.1.112", vm_id = 112 },
+]
+
+worker_nodes = [
+  { name = "worker-0", ip = "192.168.1.120", vm_id = 120 },
+  { name = "worker-1", ip = "192.168.1.121", vm_id = 121 },
+]
+
+# ============================================================
+# Network
+# ============================================================
+
+node_network_gateway       = "192.168.1.1"
+node_network_prefix_length = 24
+dns_servers                = ["1.1.1.1", "8.8.8.8"]
+network_bridge             = "vmbr0"
+
+# ============================================================
+# VM sizing
+# ============================================================
+
+control_plane_cpu_cores = 2
+control_plane_memory_mb = 4096
+control_plane_disk_gb   = 20
+
+worker_cpu_cores = 4
+worker_memory_mb = 8192
+worker_disk_gb   = 50
+
+# ============================================================
+# Tailscale
+# ============================================================
+#
+# When set, the Tailscale system extension is configured on every node.
+# Each node joins your tailnet and advertises your home LAN subnet,
+# so you can reach the kube API and all home devices from anywhere on the tailnet.
+#
+# Prerequisites:
+#   1. Regenerate your Talos schematic at https://factory.talos.dev/ with BOTH
+#      'siderolabs/qemu-guest-agent' AND 'siderolabs/tailscale' extensions.
+#      Update talos_schematic_id above with the new ID.
+#   2. Generate an auth key at https://login.tailscale.com/admin/settings/keys
+#      Use "Reusable" so multiple nodes can use the same key.
+#   3. After apply, approve the advertised subnet routes in the Tailscale admin
+#      console: https://login.tailscale.com/admin/machines
+
+tailscale_auth_key = "tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ============================================================
+# ArgoCD bootstrap
+# ============================================================
+
+# GitHub repo for your mono repo in "owner/repo" format.
+# Terraform generates an SSH key pair, uploads the public key as a deploy key,
+# and installs the private key into the cluster as an ArgoCD repo credential.
+#
+# Before running terraform apply, export your gh CLI token:
+#   export GITHUB_TOKEN=$(gh auth token)
+#   # Verify it has the 'repo' scope: gh auth status
+argocd_github_repo   = "yourname/homelab"
+argocd_repo_revision = "HEAD"
+
+# Path in your mono repo where ArgoCD Application manifests live.
+# ArgoCD reads this directory to discover all other apps (Teleport, Crossplane, etc).
+argocd_app_path = "apps"
