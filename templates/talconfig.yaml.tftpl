@@ -67,12 +67,3 @@ patches:
         extraArgs:
           proxy-mode: ipvs
           ipvs-strict-arp: "true"
-%{ if tailscale_auth_key != "" ~}
-  - |-
-    machine:
-      extensionServiceConfigs:
-        - name: tailscale
-          environment:
-            - TS_AUTHKEY=${tailscale_auth_key}
-            - TS_ROUTES=${tailscale_subnet}
-%{ endif ~}

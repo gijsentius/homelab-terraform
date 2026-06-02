@@ -75,25 +75,6 @@ worker_memory_mb = 8192
 worker_disk_gb   = 50
 
 # ============================================================
-# Tailscale
-# ============================================================
-#
-# When set, the Tailscale system extension is configured on every node.
-# Each node joins your tailnet and advertises your home LAN subnet,
-# so you can reach the kube API and all home devices from anywhere on the tailnet.
-#
-# Prerequisites:
-#   1. Regenerate your Talos schematic at https://factory.talos.dev/ with BOTH
-#      'siderolabs/qemu-guest-agent' AND 'siderolabs/tailscale' extensions.
-#      Update talos_schematic_id above with the new ID.
-#   2. Generate an auth key at https://login.tailscale.com/admin/settings/keys
-#      Use "Reusable" so multiple nodes can use the same key.
-#   3. After apply, approve the advertised subnet routes in the Tailscale admin
-#      console: https://login.tailscale.com/admin/machines
-
-tailscale_auth_key = "tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-
-# ============================================================
 # ArgoCD bootstrap
 # ============================================================
 

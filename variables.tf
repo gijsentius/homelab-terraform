@@ -219,37 +219,6 @@ variable "worker_disk_gb" {
 }
 
 # ============================================================
-# Tailscale
-# ============================================================
-
-variable "tailscale_auth_key" {
-  description = <<-EOT
-    Tailscale auth key for joining nodes to your tailnet. Generate one at
-    https://login.tailscale.com/admin/settings/keys
-
-    When set, each node runs the Tailscale system extension and gets a Tailscale
-    IP. The node also advertises your home LAN subnet so you can reach ALL cluster
-    nodes (and other home devices) from anywhere on your tailnet.
-
-    NOTE: subnet routing is useful for direct node access and home LAN devices,
-    but it causes conflicts when a tailnet device is *also on the same LAN*
-    (e.g. your laptop at home). For reliable access to cluster services from
-    any network, the Tailscale Kubernetes operator in the mono repo exposes the
-    Envoy Gateway directly on the tailnet with a dedicated 100.x.x.x address —
-    no subnet routing needed for service access.
-
-    Requires the 'siderolabs/tailscale' extension in your Talos schematic —
-    regenerate the schematic at factory.talos.dev and update talos_schematic_id.
-
-    After first apply, approve the advertised subnet routes in the Tailscale admin
-    console: https://login.tailscale.com/admin/machines
-  EOT
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
-# ============================================================
 # ArgoCD bootstrap
 # ============================================================
 

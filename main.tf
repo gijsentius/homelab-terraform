@@ -11,11 +11,6 @@ locals {
   # When there are no workers, control plane nodes must also run workloads
   allow_scheduling_on_cp = length(var.worker_nodes) == 0
 
-  # Derive the LAN subnet CIDR from the gateway + prefix variables.
-  # cidrhost(..., 0) gives the network address (e.g. 192.168.1.1/24 → 192.168.1.0).
-  # Used for Tailscale subnet routing so the node advertises the whole home LAN.
-  node_network_cidr = "${cidrhost("${var.node_network_gateway}/${var.node_network_prefix_length}", 0)}/${var.node_network_prefix_length}"
-
   # Parse "owner/repo" into the two parts the GitHub provider needs separately
   github_owner = var.argocd_github_repo != "" ? split("/", var.argocd_github_repo)[0] : ""
   github_repo  = var.argocd_github_repo != "" ? split("/", var.argocd_github_repo)[1] : ""
@@ -114,8 +109,6 @@ resource "local_file" "talconfig" {
     prefix_length          = var.node_network_prefix_length
     dns_servers            = var.dns_servers
     allow_scheduling_on_cp = local.allow_scheduling_on_cp
-    tailscale_auth_key     = var.tailscale_auth_key
-    tailscale_subnet       = local.node_network_cidr
   })
 }
 
