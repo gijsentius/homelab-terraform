@@ -258,6 +258,14 @@ resource "helm_release" "argocd" {
   wait             = true
   timeout          = 600
 
+  # Terraform installs ArgoCD once to bootstrap the cluster. After the
+  # homelab-bootstrap chart is applied, ArgoCD reconciles itself from
+  # infrastructure/argocd/ in the mono repo and owns its own config from
+  # that point on. Terraform will not override changes ArgoCD makes to itself.
+  lifecycle {
+    ignore_changes = [values]
+  }
+
   depends_on = [terraform_data.talos_kubeconfig]
 }
 
