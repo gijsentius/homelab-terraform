@@ -106,7 +106,3 @@ tailscale_auth_key = "tskey-auth-xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #   # Verify it has the 'repo' scope: gh auth status
 argocd_github_repo   = "yourname/homelab"
 argocd_repo_revision = "HEAD"
-
-# Path in your mono repo where ArgoCD Application manifests live.
-# ArgoCD reads this directory to discover all other apps (Teleport, Crossplane, etc).
-argocd_app_path = "apps"

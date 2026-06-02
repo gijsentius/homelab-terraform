@@ -59,6 +59,14 @@ patches:
 %{ for ns in dns_servers ~}
           - ${ns}
 %{ endfor ~}
+  # MetalLB L2 mode requires strictARP so only the elected node responds to ARP
+  # for a given IP, preventing duplicate announcements from multiple nodes.
+  - |-
+    cluster:
+      proxy:
+        extraArgs:
+          proxy-mode: ipvs
+          ipvs-strict-arp: "true"
 %{ if tailscale_auth_key != "" ~}
   - |-
     machine:
