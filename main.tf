@@ -17,6 +17,71 @@ locals {
 
   # SSH URL derived from the repo variable — ArgoCD uses this to clone
   argocd_repo_url = var.argocd_github_repo != "" ? "git@github.com:${var.argocd_github_repo}.git" : ""
+
+  age_key_file = "${path.module}/age.key"
+}
+
+# ============================================================
+# Age key pair — generated once, stored in age.key (gitignored)
+# ============================================================
+#
+# age-keygen writes the private key to age.key and prints the public key
+# to stdout. We capture the public key and write it into .sops.yaml so
+# SOPS knows which key to use for encryption.
+#
+# ignore_changes = all ensures this runs exactly once — the key is stable
+# across all subsequent applies.
+
+resource "terraform_data" "age_keygen" {
+  lifecycle {
+    ignore_changes = all
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      if [ ! -f age.key ]; then
+        age-keygen -o age.key
+      fi
+      PUBLIC_KEY=$(age-keygen -y age.key)
+      cat > .sops.yaml <<SOPS
+creation_rules:
+  - path_regex: talsecret\.sops\.yaml$$
+    age: >-
+      $PUBLIC_KEY
+SOPS
+    EOT
+    working_dir = path.module
+  }
+}
+
+# ============================================================
+# Cluster secrets — generated and encrypted once
+# ============================================================
+#
+# talhelper gensecret generates fresh cluster CA keys and bootstrap tokens.
+# sops encrypts the result using the age public key from .sops.yaml.
+# The encrypted file is safe to commit — the private key (age.key) stays local.
+#
+# ignore_changes = all ensures secrets are never rotated unintentionally.
+# To rotate: delete talsecret.sops.yaml and re-run terraform apply.
+
+resource "terraform_data" "talsecret" {
+  lifecycle {
+    ignore_changes = all
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      if [ ! -f talsecret.sops.yaml ]; then
+        talhelper gensecret | \
+          SOPS_AGE_KEY_FILE=age.key sops --encrypt --input-type yaml --output-type yaml /dev/stdin \
+          > talsecret.sops.yaml
+      fi
+    EOT
+    working_dir = path.module
+  }
+
+  depends_on = [terraform_data.age_keygen]
 }
 
 # ============================================================
@@ -137,7 +202,12 @@ resource "terraform_data" "talhelper_genconfig" {
   provisioner "local-exec" {
     command     = "talhelper genconfig --secret-file talsecret.sops.yaml --out-dir clusterconfig"
     working_dir = path.module
+    environment = {
+      SOPS_AGE_KEY_FILE = local.age_key_file
+    }
   }
+
+  depends_on = [terraform_data.talsecret]
 }
 
 # ============================================================
