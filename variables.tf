@@ -54,15 +54,9 @@ variable "talos_version" {
 
 variable "talos_schematic_id" {
   description = <<-EOT
-    Talos image factory schematic ID — encodes which system extensions are baked
-    into the image. Generate one at https://factory.talos.dev/
-
-    For Proxmox, include 'siderolabs/qemu-guest-agent' so Proxmox can communicate
-    with VMs (IP detection, graceful shutdown, etc).
-
-    The default is the schematic ID for: qemu-guest-agent only.
-    To add Tailscale at the OS level, regenerate the schematic with
-    'siderolabs/tailscale' added and update this value.
+    Talos image factory schematic ID. Default includes qemu-guest-agent only,
+    which is all that is needed for Proxmox. Override only if you need
+    additional system extensions — regenerate at https://factory.talos.dev/
   EOT
   type        = string
   default     = "ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515"

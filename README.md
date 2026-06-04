@@ -118,17 +118,7 @@ scoped to your domain's zone. Create it at **Cloudflare dashboard → My Profile
 
 ---
 
-## Step 1 — Talos image schematic
-
-Go to [factory.talos.dev](https://factory.talos.dev/) and build a schematic with one extension:
-
-- `siderolabs/qemu-guest-agent` — allows Proxmox to detect VM IPs and do graceful shutdowns
-
-Copy the **schematic ID**. You will put it in `terraform.tfvars` as `talos_schematic_id`.
-
----
-
-## Step 2 — Configure terraform.tfvars
+## Step 1 — Configure terraform.tfvars
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
@@ -144,7 +134,7 @@ Fill in every value. Key things to set:
 | `proxmox_node` | Node name shown in the Proxmox sidebar (usually `pve`) |
 | `proxmox_datastore_id` | Storage pool for VM disks — run `pvesm status` on the host |
 | `proxmox_iso_datastore_id` | Storage pool for ISO files |
-| `talos_schematic_id` | Schematic ID from Step 2 |
+| `talos_schematic_id` | Leave as default (qemu-guest-agent only) unless you need extra extensions |
 | `control_plane_nodes` | Name, IP, and VM ID for each control plane node |
 | `worker_nodes` | Name, IP, and VM ID for each worker node |
 | `node_network_gateway` | Your LAN gateway IP |
@@ -153,7 +143,7 @@ Fill in every value. Key things to set:
 
 ---
 
-## Step 3 — Create VMs and get MAC addresses
+## Step 2 — Create VMs and get MAC addresses
 
 ```bash
 terraform init
@@ -171,7 +161,7 @@ Go to your router and create a **DHCP reservation** for each MAC → IP pair mat
 
 ---
 
-## Step 4 — Boot the VMs into Talos maintenance mode
+## Step 3 — Boot the VMs into Talos maintenance mode
 
 Power on the VMs in the Proxmox web UI. Open the console on one — you should see the Talos boot screen within a minute. Talos waits in **maintenance mode** until it receives a machine config.
 
@@ -184,7 +174,7 @@ nc -zv 192.168.1.110 50000
 
 ---
 
-## Step 5 — Full apply
+## Step 4 — Full apply
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
@@ -213,7 +203,7 @@ This takes **10–15 minutes** end to end.
 
 ---
 
-## Step 6 — Apply the Tailscale operator OAuth secret
+## Step 5 — Apply the Tailscale operator OAuth secret
 
 The Tailscale operator needs an OAuth client to register devices on your tailnet. This secret must be applied manually before the operator can function.
 
@@ -245,7 +235,7 @@ Once applied, the operator registers the Envoy Gateway and Teleport as tailnet d
 
 ---
 
-## Step 7 — Unseal OpenBao and configure secrets
+## Step 6 — Unseal OpenBao and configure secrets
 
 OpenBao starts sealed on first deploy. Port-forward to it and initialise:
 
@@ -286,7 +276,7 @@ Once the Cloudflare token is written, `cert-manager-config` syncs successfully a
 
 ---
 
-## Step 8 — Create the first Teleport user
+## Step 7 — Create the first Teleport user
 
 ```bash
 kubectl exec -n teleport deploy/teleport -- \
