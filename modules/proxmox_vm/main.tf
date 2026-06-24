@@ -36,7 +36,6 @@ resource "proxmox_virtual_environment_vm" "this" {
   # Talos ISO — mounted as a virtual CD-ROM for the initial boot
   # After Talos installs itself to the disk, you can remove this (or leave it — Talos won't boot from it again)
   cdrom {
-    enabled   = true
     file_id   = var.talos_iso_file_id
     interface = "ide2"
   }

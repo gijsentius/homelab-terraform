@@ -92,7 +92,7 @@ resource "terraform_data" "talsecret" {
 # "schematic" — a list of system extensions baked into the image. Proxmox then
 # downloads the ISO directly (you don't need to download it yourself).
 
-resource "proxmox_virtual_environment_download_file" "talos_iso" {
+resource "proxmox_download_file" "talos_iso" {
   node_name    = var.proxmox_node
   content_type = "iso"
   datastore_id = var.proxmox_iso_datastore_id
@@ -120,7 +120,7 @@ module "control_plane_vms" {
   proxmox_node      = var.proxmox_node
   datastore_id      = var.proxmox_datastore_id
   iso_datastore_id  = var.proxmox_iso_datastore_id
-  talos_iso_file_id = proxmox_virtual_environment_download_file.talos_iso.id
+  talos_iso_file_id = proxmox_download_file.talos_iso.id
   cpu_cores         = var.control_plane_cpu_cores
   memory_mb         = var.control_plane_memory_mb
   disk_gb           = var.control_plane_disk_gb
@@ -141,7 +141,7 @@ module "worker_vms" {
   proxmox_node      = var.proxmox_node
   datastore_id      = var.proxmox_datastore_id
   iso_datastore_id  = var.proxmox_iso_datastore_id
-  talos_iso_file_id = proxmox_virtual_environment_download_file.talos_iso.id
+  talos_iso_file_id = proxmox_download_file.talos_iso.id
   cpu_cores         = var.worker_cpu_cores
   memory_mb         = var.worker_memory_mb
   disk_gb           = var.worker_disk_gb
