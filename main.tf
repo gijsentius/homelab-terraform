@@ -236,7 +236,24 @@ resource "terraform_data" "talos_apply" {
   ]
 
   provisioner "local-exec" {
+    # NODE_IPS: comma-separated list of all node IPs — passed to the wait loop below
+    environment = {
+      NODE_IPS = join(",", concat(
+        [for n in var.control_plane_nodes : n.ip],
+        [for n in var.worker_nodes : n.ip],
+      ))
+    }
+    # Poll each node until it answers the Talos maintenance-mode API, then apply.
+    # VMs are created in Proxmox before they finish booting, so we must wait here.
     command = <<-EOT
+      IFS=',' read -ra IPS <<< "$NODE_IPS"
+      for IP in "$${IPS[@]}"; do
+        echo "Waiting for $IP to enter Talos maintenance mode..."
+        until talosctl version --insecure --nodes "$IP" >/dev/null 2>&1; do
+          sleep 10
+        done
+        echo "$IP is ready"
+      done
       talhelper gencommand apply \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
@@ -264,7 +281,19 @@ resource "terraform_data" "talos_bootstrap" {
   triggers_replace = [terraform_data.talos_apply.id]
 
   provisioner "local-exec" {
+    # FIRST_CP_IP: the node bootstrap targets — must be responsive before we proceed.
+    # After config is applied, nodes reboot to install Talos to disk. We poll the
+    # authenticated Talos API (not --insecure) until the node is fully back up.
+    environment = {
+      FIRST_CP_IP = var.control_plane_nodes[0].ip
+    }
     command = <<-EOT
+      echo "Waiting for $FIRST_CP_IP to come up after config apply and reboot..."
+      until talosctl --talosconfig clusterconfig/talosconfig \
+        --nodes "$FIRST_CP_IP" version >/dev/null 2>&1; do
+        sleep 10
+      done
+      echo "$FIRST_CP_IP is up, bootstrapping etcd..."
       talhelper gencommand bootstrap \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
