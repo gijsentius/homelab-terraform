@@ -125,6 +125,7 @@ module "control_plane_vms" {
   memory_mb         = var.control_plane_memory_mb
   disk_gb           = var.control_plane_disk_gb
   network_bridge    = var.network_bridge
+  mac_address       = each.value.mac_address
 }
 
 # ============================================================
@@ -145,6 +146,7 @@ module "worker_vms" {
   memory_mb         = var.worker_memory_mb
   disk_gb           = var.worker_disk_gb
   network_bridge    = var.network_bridge
+  mac_address       = each.value.mac_address
 }
 
 # ============================================================

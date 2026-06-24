@@ -108,19 +108,20 @@ variable "install_disk" {
 variable "control_plane_nodes" {
   description = <<-EOT
     Control plane node definitions. Each needs:
-    - name:   hostname (must be unique across the cluster)
-    - ip:     the static IP this node will use
-    - vm_id:  Proxmox VM ID (unique per Proxmox instance, 100–999999)
+    - name:        hostname (must be unique across the cluster)
+    - ip:          the static IP this node will use
+    - vm_id:       Proxmox VM ID (unique per Proxmox instance, 100–999999)
+    - mac_address: optional static MAC for DHCP reservations (e.g. "BC:24:11:AA:BB:CC")
 
     Use 1 node for simplicity, 3 for HA (etcd needs an odd number for quorum).
     Set up DHCP reservations (MAC → IP) in your router to ensure each VM
-    always boots with its intended IP. MAC addresses appear in Terraform outputs
-    after the VMs are created.
+    always boots with its intended IP.
   EOT
   type = list(object({
-    name  = string
-    ip    = string
-    vm_id = number
+    name        = string
+    ip          = string
+    vm_id       = number
+    mac_address = optional(string, "")
   }))
   default = [
     { name = "cp-0", ip = "192.168.1.110", vm_id = 110 },
@@ -130,9 +131,10 @@ variable "control_plane_nodes" {
 variable "worker_nodes" {
   description = "Worker node definitions. Same shape as control_plane_nodes."
   type = list(object({
-    name  = string
-    ip    = string
-    vm_id = number
+    name        = string
+    ip          = string
+    vm_id       = number
+    mac_address = optional(string, "")
   }))
   default = [
     { name = "worker-0", ip = "192.168.1.120", vm_id = 120 },

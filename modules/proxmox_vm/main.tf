@@ -42,9 +42,9 @@ resource "proxmox_virtual_environment_vm" "this" {
   }
 
   network_device {
-    bridge = var.network_bridge
-    # VirtIO NIC: paravirtualized for best network performance in a VM
-    model = "virtio"
+    bridge      = var.network_bridge
+    model       = "virtio"
+    mac_address = var.mac_address != "" ? var.mac_address : null
   }
 
   # QEMU guest agent allows Proxmox to see the VM's IP, do graceful shutdown, etc.

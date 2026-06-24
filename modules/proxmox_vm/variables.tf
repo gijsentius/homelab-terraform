@@ -47,3 +47,9 @@ variable "network_bridge" {
   description = "Proxmox bridge to attach the VM's network interface to"
   type        = string
 }
+
+variable "mac_address" {
+  description = "Static MAC address for the VM's network interface. Leave empty to let Proxmox assign one."
+  type        = string
+  default     = ""
+}
