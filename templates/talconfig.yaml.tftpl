@@ -18,7 +18,8 @@ nodes:
     installDisk: ${install_disk}
     machineType: controlplane
     networkInterfaces:
-      - interface: eth0
+      - deviceSelector:
+          driver: virtio_net
         dhcp: false
         addresses:
           - ${node.ip}/${prefix_length}
@@ -37,7 +38,8 @@ nodes:
     installDisk: ${install_disk}
     machineType: worker
     networkInterfaces:
-      - interface: eth0
+      - deviceSelector:
+          driver: virtio_net
         dhcp: false
         addresses:
           - ${node.ip}/${prefix_length}

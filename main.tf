@@ -236,18 +236,19 @@ resource "terraform_data" "talos_apply" {
   ]
 
   provisioner "local-exec" {
-    # NODE_IPS: comma-separated list of all node IPs — passed to the wait loop below
+    # NODE_IPS: space-separated list of all node IPs — passed to the wait loop below.
+    # Space-separated (not comma) so the POSIX for-loop can split it without arrays.
     environment = {
-      NODE_IPS = join(",", concat(
+      NODE_IPS = join(" ", concat(
         [for n in var.control_plane_nodes : n.ip],
         [for n in var.worker_nodes : n.ip],
       ))
     }
     # Poll each node until it answers the Talos maintenance-mode API, then apply.
     # VMs are created in Proxmox before they finish booting, so we must wait here.
+    # Uses only POSIX sh syntax — Terraform local-exec runs under /bin/sh (dash on Linux).
     command = <<-EOT
-      IFS=',' read -ra IPS <<< "$NODE_IPS"
-      for IP in "$${IPS[@]}"; do
+      for IP in $NODE_IPS; do
         echo "Waiting for $IP to enter Talos maintenance mode..."
         until talosctl version --insecure --nodes "$IP" >/dev/null 2>&1; do
           sleep 10
