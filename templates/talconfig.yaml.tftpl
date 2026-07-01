@@ -16,7 +16,7 @@ nodes:
   - hostname: ${node.name}
     ipAddress: ${node.ip}
     installDisk: ${install_disk}
-    machineType: controlplane
+    controlPlane: true
     networkInterfaces:
       - deviceSelector:
           driver: virtio_net
@@ -36,7 +36,6 @@ nodes:
   - hostname: ${node.name}
     ipAddress: ${node.ip}
     installDisk: ${install_disk}
-    machineType: worker
     networkInterfaces:
       - deviceSelector:
           driver: virtio_net
