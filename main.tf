@@ -260,7 +260,7 @@ resource "terraform_data" "talos_apply" {
       talhelper gencommand apply \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
-        --extra-flags "--insecure" \
+        --extra-flags "--insecure --reboot" \
         | bash
     EOT
     working_dir = path.module
