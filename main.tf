@@ -301,10 +301,13 @@ resource "terraform_data" "talos_bootstrap" {
         sleep 10
       done
       echo "$FIRST_CP_IP is up, bootstrapping etcd..."
-      talhelper gencommand bootstrap \
+      until talhelper gencommand bootstrap \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
-        | bash
+        | bash; do
+        echo "Bootstrap not ready yet, retrying in 10s..."
+        sleep 10
+      done
     EOT
     working_dir = path.module
   }
