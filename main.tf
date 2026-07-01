@@ -260,8 +260,12 @@ resource "terraform_data" "talos_apply" {
       talhelper gencommand apply \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
-        --extra-flags "--insecure --reboot" \
+        --extra-flags "--insecure" \
         | bash
+      for IP in $NODE_IPS; do
+        echo "Rebooting $IP..."
+        talosctl reboot --insecure --nodes "$IP" 2>/dev/null || true
+      done
     EOT
     working_dir = path.module
   }
