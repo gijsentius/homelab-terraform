@@ -46,10 +46,12 @@ resource "proxmox_virtual_environment_vm" "this" {
     mac_address = var.mac_address != "" ? var.mac_address : null
   }
 
-  # QEMU guest agent allows Proxmox to see the VM's IP, do graceful shutdown, etc.
-  # This only works if the 'siderolabs/qemu-guest-agent' extension is in your Talos image schematic
+  # QEMU guest agent allows Proxmox to do graceful shutdown of Talos VMs.
+  # Talos's qemu-guest-agent does not implement guest-network-get-interfaces,
+  # so set a short timeout to avoid hanging on state refresh.
   agent {
     enabled = true
+    timeout = "1m"
   }
 
   operating_system {
