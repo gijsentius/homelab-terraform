@@ -50,6 +50,12 @@ resource "proxmox_virtual_environment_vm" "this" {
     type = "l26" # Linux kernel 2.6+ (the correct type for any modern Linux)
   }
 
+  # Talos does not run the standard QEMU guest agent — disabling it prevents
+  # the bpg/proxmox provider from hanging on state refresh waiting for agent responses.
+  agent {
+    enabled = false
+  }
+
   lifecycle {
     # Proxmox may change some fields (like MAC address) after VM creation.
     # Telling Terraform to ignore those prevents unnecessary re-creation.
