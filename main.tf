@@ -339,7 +339,8 @@ resource "terraform_data" "talos_kubeconfig" {
       talhelper gencommand kubeconfig \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
-        --extra-flags "--merge=false --kubeconfig ./kubeconfig" \
+        --extra-flags "--merge=false --force" \
+        | sed 's/$/ .\/kubeconfig/' \
         | bash
     EOT
     working_dir = path.module
