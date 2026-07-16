@@ -301,10 +301,19 @@ resource "terraform_data" "talos_bootstrap" {
         sleep 10
       done
       echo "$FIRST_CP_IP is up, bootstrapping etcd..."
-      until talhelper gencommand bootstrap \
-        --config-file talconfig.yaml \
-        --out-dir clusterconfig \
-        | bash; do
+      while true; do
+        OUTPUT=$(talhelper gencommand bootstrap \
+          --config-file talconfig.yaml \
+          --out-dir clusterconfig \
+          | bash 2>&1)
+        EXIT=$?
+        echo "$OUTPUT"
+        if [ $EXIT -eq 0 ]; then
+          break
+        elif echo "$OUTPUT" | grep -q "AlreadyExists"; then
+          echo "etcd already bootstrapped, continuing..."
+          break
+        fi
         echo "Bootstrap not ready yet, retrying in 10s..."
         sleep 10
       done
