@@ -336,6 +336,7 @@ resource "terraform_data" "talos_kubeconfig" {
 
   provisioner "local-exec" {
     command = <<-EOT
+      rm -f ./kubeconfig
       talhelper gencommand kubeconfig \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
