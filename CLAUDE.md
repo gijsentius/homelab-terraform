@@ -10,12 +10,20 @@ Terraform project that provisions a homelab Kubernetes cluster on Proxmox using 
 
 The cluster will run **Crossplane**, **Backstage**, and **ArgoCD** to manage all homelab resources.
 
+Terraform also bootstraps **ArgoCD** itself: it generates a read-only GitHub deploy key,
+uploads it to your mono repo, and installs ArgoCD (plus an AppProject/ApplicationSet that
+discovers apps in that repo) via a local Helm chart at `../homelab/apps`. This step is
+optional and only runs when `argocd_github_repo` is set.
+
 ## Providers
 
 | Provider | Purpose |
 |---|---|
 | `bpg/proxmox` | Create/manage Proxmox VMs, download ISO images |
 | `hashicorp/local` | Render and write `talconfig.yaml` from a template |
+| `hashicorp/tls` | Generate the ArgoCD SSH deploy key pair |
+| `integrations/github` | Upload the deploy key to your mono repo |
+| `hashicorp/helm` | Install ArgoCD + bootstrap chart into the new cluster |
 
 ## File structure
 
@@ -30,6 +38,9 @@ templates/
   talconfig.yaml.tftpl           # talhelper cluster definition template
 modules/
   proxmox_vm/                    # Reusable module: creates one Proxmox VM
+
+../homelab/apps                  # Sibling repo/dir: Helm chart installed by helm_release.homelab_bootstrap
+                                  # (must exist at that relative path for the ArgoCD bootstrap step to work)
 ```
 
 ## talhelper workflow
@@ -38,9 +49,13 @@ talhelper is a wrapper around talosctl that turns a single `talconfig.yaml` into
 machine configs and the talosctl commands to apply/bootstrap them.
 
 Terraform's role here:
-1. Render `talconfig.yaml` from `templates/talconfig.yaml.tftpl` + your variables
-2. Run `talhelper genconfig` when `talconfig.yaml` changes
-3. Run the apply/bootstrap/kubeconfig commands in sequence
+1. Generate the age keypair (`age.key`) and `.sops.yaml`, and generate + SOPS-encrypt
+   `talsecret.sops.yaml` — both run once via `terraform_data` resources with
+   `ignore_changes = all`, so they're stable across applies (see main.tf)
+2. Render `talconfig.yaml` from `templates/talconfig.yaml.tftpl` + your variables
+3. Run `talhelper genconfig` when `talconfig.yaml` changes
+4. Run the apply/bootstrap/kubeconfig commands in sequence
+5. If `argocd_github_repo` is set: create a GitHub deploy key and install ArgoCD via Helm
 
 ## First-time setup
 
@@ -48,52 +63,45 @@ Terraform's role here:
 # Install tools
 brew install age sops talhelper talosctl kubectl
 
-# --- SOPS key pair (once per machine) ---
-# Generate an age key pair
-age-keygen -o age.key
-# Prints: "Public key: age1..."  ← copy this into .sops.yaml
-
-# Move the private key to the default SOPS location (talhelper decrypts from here)
-mkdir -p ~/.config/sops/age
-mv age.key ~/.config/sops/age/keys.txt
-
-# Put your public key in .sops.yaml, then commit .sops.yaml
-
-# --- Cluster secrets (once per cluster) ---
-# Generate and immediately encrypt with SOPS
-talhelper gensecret > talsecret.sops.yaml
-sops --encrypt --in-place talsecret.sops.yaml
-
-# talsecret.sops.yaml is now safe to commit — the contents are encrypted
-git add .sops.yaml talsecret.sops.yaml
-
 # --- Terraform ---
 cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
-terraform init
+tofu init
 ```
+
+The age keypair (`age.key` + `.sops.yaml`) and the SOPS-encrypted `talsecret.sops.yaml` are
+now generated automatically by `terraform_data` resources in `main.tf` on the first
+`tofu apply` — no manual `age-keygen`/`talhelper gensecret` step needed. Each is guarded by
+`ignore_changes = all`, so once created they're never regenerated or rotated by subsequent
+applies. Commit `.sops.yaml` and `talsecret.sops.yaml` after the first apply; `age.key`
+stays local (gitignored) since it's the private key.
+
+To rotate cluster secrets: delete `talsecret.sops.yaml` and re-apply.
 
 ## Workflow
 
 ```bash
 # Phase 1: create VMs to get their MAC addresses for DHCP reservations
-terraform apply -target=module.control_plane_vms -target=module.worker_vms
+tofu apply -target=module.control_plane_vms -target=module.worker_vms
 
 # → Check outputs for MAC addresses:
-terraform output control_plane_mac_addresses
-terraform output worker_mac_addresses
+tofu output control_plane_mac_addresses
+tofu output worker_mac_addresses
 
 # → Configure DHCP reservations in your router: MAC → static IP
 # → Power on the VMs in Proxmox, wait for them to boot into Talos maintenance mode
 #    (you should see the Talos console on the Proxmox VM screen)
 
 # Phase 2: generate configs, apply to nodes, bootstrap, get kubeconfig
-terraform apply
+# (also installs ArgoCD via Helm if argocd_github_repo is set)
+tofu apply
 
 # Use the cluster
-export KUBECONFIG=$(terraform output -raw kubeconfig_path)
+export KUBECONFIG=$(tofu output -raw kubeconfig_path)
 kubectl get nodes
 ```
+
+This project uses **OpenTofu** (`tofu`), not Terraform — same HCL and workflow, different binary.
 
 ## Key design decisions
 
@@ -113,9 +121,13 @@ For Tailscale at the OS level: also add `siderolabs/tailscale`
 | File | In git? | Contains |
 |---|---|---|
 | `talsecret.sops.yaml` | ✅ yes | SOPS-encrypted cluster secrets (safe to commit) |
-| `.sops.yaml` | ✅ yes | age public key + encryption rules (safe to commit) |
-| `~/.config/sops/age/keys.txt` | ❌ never | age private key — stays on your machine |
+| `.sops.yaml` | ✅ yes | age public key + encryption rules (safe to commit) — written by `terraform_data.age_keygen` |
+| `age.key` | ❌ never | age private key — generated by `terraform_data.age_keygen`, stays local |
 | `terraform.tfvars` | ❌ never | Proxmox API token and IP addresses |
-| `terraform.tfstate` | ❌ never | Terraform state (contains Proxmox token) |
+| `terraform.tfstate` | ❌ never | Terraform state (contains Proxmox token and the ArgoCD deploy key's private key) |
 | `clusterconfig/` | ❌ never | Generated machine configs — recreated by Terraform |
 | `kubeconfig` | ❌ never | Cluster access credentials |
+
+Note: talhelper normally decrypts SOPS files using the key at `~/.config/sops/age/keys.txt`,
+but this repo's `terraform_data` steps instead point `SOPS_AGE_KEY_FILE` at the local
+`age.key`, so no global SOPS key setup is required on the machine running Terraform.

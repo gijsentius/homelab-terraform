@@ -244,3 +244,14 @@ variable "argocd_repo_revision" {
   default     = "HEAD"
 }
 
+variable "argocd_chart_version" {
+  description = <<-EOT
+    Version of the upstream argo-cd chart (argoproj/argo-helm) to bootstrap.
+    Must match the version pinned in infrastructure/argocd/Chart.yaml in the
+    mono repo — after bootstrap, ArgoCD reconciles its own Helm release from
+    git using that pin, not this variable, so keep the two in sync manually.
+  EOT
+  type        = string
+  default     = "7.8.23"
+}
+

@@ -375,19 +375,61 @@ resource "github_repository_deploy_key" "argocd" {
 }
 
 # ============================================================
-# homelab-bootstrap — installs ArgoCD + AppProject + ApplicationSet
+# ArgoCD — installed directly from the upstream chart
 # ============================================================
 #
-# A single Helm release that:
-#   1. Installs ArgoCD (as a chart dependency) and waits for it to be ready
-#   2. Creates the ArgoCD repo credential Secret with the SSH deploy key
-#   3. Creates the AppProject and ApplicationSet that discover the mono repo
+# Installed on its own, separate from the AppProject/ApplicationSet below.
+# Reason: AppProject and ApplicationSet are instances of CRDs that this chart
+# installs. Helm sorts CRDs before custom resources within a single release,
+# but does not wait for the API server to finish registering a freshly-created
+# CRD before moving on to apply the rest — so creating the CRDs and instances
+# of them in one release races, and intermittently fails with "no matches for
+# kind" / CRD-not-found errors. Splitting into two Helm releases (this one,
+# then homelab_bootstrap below, depends_on-ed after it) gives the API server
+# time to register the CRDs before anything tries to use them.
 #
-# After this apply ArgoCD immediately begins syncing all infrastructure apps.
-# ArgoCD manages its own config from the mono repo from this point on;
-# ignore_changes = [values] prevents Terraform from fighting it on re-applies.
+# ignore_changes = all: this is a one-time bootstrap install. Once
+# infrastructure/argocd/ (in the mono repo) is picked up by the
+# ApplicationSet below, ArgoCD reconciles its own Helm release from git —
+# Terraform stops touching it after the initial create so the two don't fight.
+
+resource "helm_release" "argocd" {
+  count = var.argocd_github_repo != "" ? 1 : 0
+
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  version          = var.argocd_chart_version
+  namespace        = "argocd"
+  create_namespace = true
+  wait             = true
+  timeout          = 600
+
+  set {
+    name  = "server.service.type"
+    value = "ClusterIP"
+  }
+
+  lifecycle {
+    ignore_changes = all
+  }
+
+  depends_on = [terraform_data.talos_kubeconfig]
+}
+
+# ============================================================
+# homelab-bootstrap — repo credentials + AppProject + ApplicationSet
+# ============================================================
 #
-# Access ArgoCD while Teleport is bootstrapping:
+# A Helm release that creates:
+#   1. The ArgoCD repo credential Secret with the SSH deploy key
+#   2. The AppProject and ApplicationSet that discover the mono repo
+#
+# After this apply ArgoCD immediately begins syncing all infrastructure apps,
+# including infrastructure/argocd/ itself — from that point on ArgoCD manages
+# its own Helm release from git, not Terraform (see helm_release.argocd above).
+#
+# Access ArgoCD while it bootstraps:
 #   kubectl port-forward svc/argocd-server -n argocd 8080:443 --kubeconfig kubeconfig
 # Initial admin password:
 #   kubectl get secret argocd-initial-admin-secret -n argocd \
@@ -397,7 +439,7 @@ resource "helm_release" "homelab_bootstrap" {
   count = var.argocd_github_repo != "" ? 1 : 0
 
   name             = "homelab-bootstrap"
-  chart            = "${path.module}/../homelab/apps"
+  chart            = "${path.module}/../homelab-apps/apps"
   namespace        = "argocd"
   create_namespace = true
   wait             = true
@@ -418,12 +460,8 @@ resource "helm_release" "homelab_bootstrap" {
     value = tls_private_key.argocd_deploy_key[0].private_key_openssh
   }
 
-  lifecycle {
-    ignore_changes = [values]
-  }
-
   depends_on = [
-    terraform_data.talos_kubeconfig,
+    helm_release.argocd,
     github_repository_deploy_key.argocd,
   ]
 }
