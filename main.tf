@@ -19,6 +19,10 @@ locals {
   argocd_repo_url = var.argocd_github_repo != "" ? "git@github.com:${var.argocd_github_repo}.git" : ""
 
   age_key_file = "${path.module}/age.key"
+
+  # Scratch directory the mono repo is cloned into on every apply — see
+  # terraform_data.homelab_apps_checkout below.
+  homelab_apps_checkout_dir = "${path.module}/.homelab-apps-checkout"
 }
 
 # ============================================================
@@ -418,6 +422,41 @@ resource "helm_release" "argocd" {
 }
 
 # ============================================================
+# homelab-apps checkout — cloned fresh from GitHub on every apply
+# ============================================================
+#
+# helm_release.homelab_bootstrap needs the mono repo's apps/ chart on local
+# disk (the Helm provider doesn't support a bare git repo as a chart source).
+# Rather than assuming a manually-maintained sibling checkout exists next to
+# this repo — fragile across machines: directory naming has to match exactly,
+# a stale checkout silently serves outdated content, and gitignored local
+# artifacts (e.g. a vendored charts/ dir from a since-removed dependency) can
+# leak into the render — clone the repo into a scratch directory here instead.
+#
+# Auth: HTTPS with GITHUB_TOKEN (already required for the github provider
+# above), not SSH, so this doesn't depend on the host's SSH agent/keys.
+#
+# triggers_replace = [timestamp()]: re-clone on every apply, so this always
+# deploys whatever is currently on argocd_repo_revision — the same freshness
+# ArgoCD's own git generator has, instead of tracking local filesystem state.
+
+resource "terraform_data" "homelab_apps_checkout" {
+  count = var.argocd_github_repo != "" ? 1 : 0
+
+  triggers_replace = [timestamp()]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      rm -rf "${local.homelab_apps_checkout_dir}"
+      git clone --quiet "https://x-access-token:$GITHUB_TOKEN@github.com/${var.argocd_github_repo}.git" \
+        "${local.homelab_apps_checkout_dir}"
+      git -C "${local.homelab_apps_checkout_dir}" checkout --quiet "${var.argocd_repo_revision}"
+    EOT
+  }
+}
+
+# ============================================================
 # homelab-bootstrap — repo credentials + AppProject + ApplicationSet
 # ============================================================
 #
@@ -439,7 +478,7 @@ resource "helm_release" "homelab_bootstrap" {
   count = var.argocd_github_repo != "" ? 1 : 0
 
   name             = "homelab-bootstrap"
-  chart            = "${path.module}/../homelab-apps/apps"
+  chart            = "${local.homelab_apps_checkout_dir}/apps"
   namespace        = "argocd"
   create_namespace = true
   wait             = true
@@ -463,5 +502,6 @@ resource "helm_release" "homelab_bootstrap" {
   depends_on = [
     helm_release.argocd,
     github_repository_deploy_key.argocd,
+    terraform_data.homelab_apps_checkout,
   ]
 }

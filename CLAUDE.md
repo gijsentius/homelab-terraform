@@ -11,8 +11,9 @@ Terraform project that provisions a homelab Kubernetes cluster on Proxmox using 
 The cluster will run **Crossplane**, **Backstage**, and **ArgoCD** to manage all homelab resources.
 
 Terraform also bootstraps **ArgoCD** itself: it generates a read-only GitHub deploy key,
-uploads it to your mono repo, and installs ArgoCD (plus an AppProject/ApplicationSet that
-discovers apps in that repo) via a local Helm chart at `../homelab/apps`. This step is
+uploads it to your mono repo, clones the repo fresh into `.homelab-apps-checkout/` (via
+`GITHUB_TOKEN`, on every apply), and installs ArgoCD plus an AppProject/ApplicationSet
+that discovers apps in that repo, using the chart at `apps/` in the clone. This step is
 optional and only runs when `argocd_github_repo` is set.
 
 ## Providers
@@ -39,8 +40,9 @@ templates/
 modules/
   proxmox_vm/                    # Reusable module: creates one Proxmox VM
 
-../homelab/apps                  # Sibling repo/dir: Helm chart installed by helm_release.homelab_bootstrap
-                                  # (must exist at that relative path for the ArgoCD bootstrap step to work)
+.homelab-apps-checkout/          # Gitignored — mono repo cloned fresh here on every apply
+                                  # by terraform_data.homelab_apps_checkout; not a sibling dir
+                                  # you maintain yourself, don't rely on its contents persisting
 ```
 
 ## talhelper workflow
@@ -131,3 +133,8 @@ For Tailscale at the OS level: also add `siderolabs/tailscale`
 Note: talhelper normally decrypts SOPS files using the key at `~/.config/sops/age/keys.txt`,
 but this repo's `terraform_data` steps instead point `SOPS_AGE_KEY_FILE` at the local
 `age.key`, so no global SOPS key setup is required on the machine running Terraform.
+
+`.homelab-apps-checkout/` (gitignored) holds a fresh clone of the mono repo, re-cloned on
+every apply by `terraform_data.homelab_apps_checkout` — never edit it by hand, it's
+overwritten on the next apply. Requires `GITHUB_TOKEN` to be set (same one the `github`
+provider needs) with read access to `argocd_github_repo`.
