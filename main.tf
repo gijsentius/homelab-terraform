@@ -505,3 +505,43 @@ resource "helm_release" "homelab_bootstrap" {
     terraform_data.homelab_apps_checkout,
   ]
 }
+
+# ============================================================
+# Tailscale operator OAuth credentials
+# ============================================================
+#
+# tailscale-operator (installed by ArgoCD via infrastructure/tailscale-operator/
+# in the mono repo) needs this Secret to authenticate to the Tailscale API. The
+# mono repo intentionally doesn't create it — that would mean committing OAuth
+# credentials in the clear (unlike talsecret.sops.yaml, there's no SOPS setup
+# for arbitrary app secrets there). Terraform creates it directly instead.
+#
+# Optional: only created when tailscale_oauth_client_id is set. If left empty,
+# create operator-oauth-secret.yaml.example manually and apply it — see the
+# variable's description.
+
+resource "kubernetes_namespace" "tailscale" {
+  count = var.tailscale_oauth_client_id != "" ? 1 : 0
+
+  metadata {
+    name = "tailscale"
+  }
+
+  depends_on = [terraform_data.talos_kubeconfig]
+}
+
+resource "kubernetes_secret" "tailscale_operator_oauth" {
+  count = var.tailscale_oauth_client_id != "" ? 1 : 0
+
+  metadata {
+    name      = "operator-oauth"
+    namespace = "tailscale"
+  }
+
+  data = {
+    client_id     = var.tailscale_oauth_client_id
+    client_secret = var.tailscale_oauth_client_secret
+  }
+
+  depends_on = [kubernetes_namespace.tailscale]
+}

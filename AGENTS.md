@@ -16,6 +16,11 @@ uploads it to your mono repo, clones the repo fresh into `.homelab-apps-checkout
 that discovers apps in that repo, using the chart at `apps/` in the clone. This step is
 optional and only runs when `argocd_github_repo` is set.
 
+Terraform also creates the `operator-oauth` Secret that `tailscale-operator` (one of the
+apps ArgoCD discovers) needs — the mono repo can't hold real OAuth credentials, so
+Terraform writes the Secret directly instead of it living in a Helm chart's values.
+Optional, only created when `tailscale_oauth_client_id` is set.
+
 ## Providers
 
 | Provider | Purpose |
@@ -25,6 +30,7 @@ optional and only runs when `argocd_github_repo` is set.
 | `hashicorp/tls` | Generate the ArgoCD SSH deploy key pair |
 | `integrations/github` | Upload the deploy key to your mono repo |
 | `hashicorp/helm` | Install ArgoCD + bootstrap chart into the new cluster |
+| `hashicorp/kubernetes` | Create the tailscale-operator OAuth credentials Secret |
 
 ## File structure
 
@@ -138,3 +144,6 @@ but this repo's `terraform_data` steps instead point `SOPS_AGE_KEY_FILE` at the 
 every apply by `terraform_data.homelab_apps_checkout` — never edit it by hand, it's
 overwritten on the next apply. Requires `GITHUB_TOKEN` to be set (same one the `github`
 provider needs) with read access to `argocd_github_repo`.
+
+`terraform.tfvars` also holds the Tailscale OAuth client ID/secret if you set them —
+another reason it's never committed. `terraform.tfstate` stores their values too.

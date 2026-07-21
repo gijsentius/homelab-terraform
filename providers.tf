@@ -20,4 +20,8 @@ provider "helm" {
   }
 }
 
+provider "kubernetes" {
+  config_path = "${path.module}/kubeconfig"
+}
+
 # hashicorp/tls, hashicorp/local, and terraform_data need no provider block
