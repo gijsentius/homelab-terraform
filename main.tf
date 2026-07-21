@@ -221,17 +221,31 @@ resource "terraform_data" "talhelper_genconfig" {
 # ============================================================
 #
 # talhelper gencommand apply generates the talosctl commands needed to push
-# each node's machine config via the Talos API, then we pipe them to bash.
+# each node's machine config via the Talos API, one command per node.
 #
-# --extra-flags "--insecure": skips certificate verification for the first
-# apply, when nodes are in maintenance mode and don't have certificates yet.
+# A node's config can only be applied one of two ways, and which one works
+# depends on whether Talos is already installed:
+#   - Freshly booted from the ISO, no disk install yet ("maintenance mode"):
+#     only the insecure (unauthenticated) API is up, so this requires
+#     --insecure — and since VMs are created in Proxmox before they finish
+#     booting, we must first wait for that API to come up.
+#   - Already installed and running from disk (e.g. re-running apply after
+#     changing talconfig.yaml on a live cluster): the insecure API refuses
+#     ApplyConfiguration with "already installed and booted from another
+#     medium". This requires a secure connection instead, authenticated via
+#     the talosconfig that talhelper generates alongside the machine configs.
 #
-# This step requires all VMs to be:
-#   1. Powered on and booted from the Talos ISO
-#   2. Reachable at their configured IP addresses
+# There's no way to know from Terraform which state a given node is in, so
+# for each generated command we try it securely first — this is what
+# succeeds for already-running nodes, and fails fast for fresh ones (no
+# cluster CA to trust yet). Only on that failure do we wait for maintenance
+# mode, retry with --insecure, and reboot — i.e. the original bootstrap path,
+# now scoped to just the nodes that actually need it instead of forced on
+# every node (including already-running ones) on every apply.
 #
-# If this step fails because VMs aren't ready, Terraform marks the resource as
-# tainted. Re-run 'terraform apply' once the nodes are up — it will retry.
+# This step requires all VMs to be powered on and reachable at their
+# configured IP addresses. If it fails because VMs aren't ready, Terraform
+# marks the resource as tainted — re-run 'terraform apply' once nodes are up.
 
 resource "terraform_data" "talos_apply" {
   triggers_replace = [
@@ -242,34 +256,26 @@ resource "terraform_data" "talos_apply" {
   ]
 
   provisioner "local-exec" {
-    # NODE_IPS: space-separated list of all node IPs — passed to the wait loop below.
-    # Space-separated (not comma) so the POSIX for-loop can split it without arrays.
-    environment = {
-      NODE_IPS = join(" ", concat(
-        [for n in var.control_plane_nodes : n.ip],
-        [for n in var.worker_nodes : n.ip],
-      ))
-    }
-    # Poll each node until it answers the Talos maintenance-mode API, then apply.
-    # VMs are created in Proxmox before they finish booting, so we must wait here.
     # Uses only POSIX sh syntax — Terraform local-exec runs under /bin/sh (dash on Linux).
     command = <<-EOT
-      for IP in $NODE_IPS; do
-        echo "Waiting for $IP to enter Talos maintenance mode..."
-        until talosctl version --insecure --nodes "$IP" >/dev/null 2>&1; do
-          sleep 10
-        done
-        echo "$IP is ready"
-      done
+      set -e
       talhelper gencommand apply \
         --config-file talconfig.yaml \
         --out-dir clusterconfig \
-        --extra-flags "--insecure" \
-        | bash
-      for IP in $NODE_IPS; do
-        echo "Rebooting $IP..."
-        talosctl reboot --insecure --nodes "$IP" 2>/dev/null || true
-      done
+      | while IFS= read -r cmd; do
+          [ -z "$cmd" ] && continue
+          if eval "$cmd"; then
+            continue
+          fi
+          IP=$(echo "$cmd" | sed -n 's/.*--nodes=\([^ ]*\).*/\1/p')
+          echo ">> Secure apply failed for $IP, assuming maintenance mode. Waiting for insecure API..."
+          until talosctl version --insecure --nodes "$IP" >/dev/null 2>&1; do
+            sleep 10
+          done
+          eval "$cmd --insecure"
+          echo "Rebooting $IP..."
+          talosctl reboot --insecure --nodes "$IP" 2>/dev/null || true
+        done
     EOT
     working_dir = path.module
   }
@@ -504,4 +510,44 @@ resource "helm_release" "homelab_bootstrap" {
     github_repository_deploy_key.argocd,
     terraform_data.homelab_apps_checkout,
   ]
+}
+
+# ============================================================
+# Tailscale operator OAuth credentials
+# ============================================================
+#
+# tailscale-operator (installed by ArgoCD via infrastructure/tailscale-operator/
+# in the mono repo) needs this Secret to authenticate to the Tailscale API. The
+# mono repo intentionally doesn't create it — that would mean committing OAuth
+# credentials in the clear (unlike talsecret.sops.yaml, there's no SOPS setup
+# for arbitrary app secrets there). Terraform creates it directly instead.
+#
+# Optional: only created when tailscale_oauth_client_id is set. If left empty,
+# create operator-oauth-secret.yaml.example manually and apply it — see the
+# variable's description.
+
+resource "kubernetes_namespace" "tailscale" {
+  count = var.tailscale_oauth_client_id != "" ? 1 : 0
+
+  metadata {
+    name = "tailscale"
+  }
+
+  depends_on = [terraform_data.talos_kubeconfig]
+}
+
+resource "kubernetes_secret" "tailscale_operator_oauth" {
+  count = var.tailscale_oauth_client_id != "" ? 1 : 0
+
+  metadata {
+    name      = "operator-oauth"
+    namespace = "tailscale"
+  }
+
+  data = {
+    client_id     = var.tailscale_oauth_client_id
+    client_secret = var.tailscale_oauth_client_secret
+  }
+
+  depends_on = [kubernetes_namespace.tailscale]
 }

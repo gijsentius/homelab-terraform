@@ -255,3 +255,29 @@ variable "argocd_chart_version" {
   default     = "7.8.23"
 }
 
+# ============================================================
+# Tailscale operator
+# ============================================================
+
+variable "tailscale_oauth_client_id" {
+  description = <<-EOT
+    OAuth client ID for the tailscale-operator (infrastructure/tailscale-operator/
+    in the mono repo). Create one at https://login.tailscale.com/admin/settings/oauth,
+    grant it "Devices: write" scope, and tag it "tag:k8s".
+
+    Leave empty to skip creating the operator-oauth Secret — you'd then need
+    to create it manually (see operator-oauth-secret.yaml.example in the mono
+    repo) before ArgoCD can sync tailscale-operator successfully.
+  EOT
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tailscale_oauth_client_secret" {
+  description = "OAuth client secret paired with tailscale_oauth_client_id."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+

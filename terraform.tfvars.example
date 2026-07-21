@@ -87,3 +87,14 @@ worker_disk_gb   = 50
 #   # Verify it has the 'repo' scope: gh auth status
 argocd_github_repo   = "yourname/homelab"
 argocd_repo_revision = "HEAD"
+
+# ============================================================
+# Tailscale operator
+# ============================================================
+
+# Create an OAuth client at https://login.tailscale.com/admin/settings/oauth,
+# grant it "Devices: write" scope, and tag it "tag:k8s". Leave both empty to
+# skip — you'd then need to create the operator-oauth Secret manually instead
+# (see operator-oauth-secret.yaml.example in the mono repo).
+tailscale_oauth_client_id     = ""
+tailscale_oauth_client_secret = ""

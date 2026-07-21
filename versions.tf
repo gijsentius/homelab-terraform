@@ -29,5 +29,11 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.17"
     }
+
+    # Creates the tailscale-operator OAuth credentials Secret directly in-cluster
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.35"
+    }
   }
 }
