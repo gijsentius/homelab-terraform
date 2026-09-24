@@ -24,4 +24,8 @@ provider "kubernetes" {
   config_path = "${path.module}/kubeconfig"
 }
 
+# The talos provider needs no static config — client credentials are passed
+# per-resource via talos_machine_secrets.this.client_configuration.
+provider "talos" {}
+
 # hashicorp/tls, hashicorp/local, and terraform_data need no provider block

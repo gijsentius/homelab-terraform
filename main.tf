@@ -18,74 +18,9 @@ locals {
   # SSH URL derived from the repo variable — ArgoCD uses this to clone
   argocd_repo_url = var.argocd_github_repo != "" ? "git@github.com:${var.argocd_github_repo}.git" : ""
 
-  age_key_file = "${path.module}/age.key"
-
   # Scratch directory the mono repo is cloned into on every apply — see
   # terraform_data.homelab_apps_checkout below.
   homelab_apps_checkout_dir = "${path.module}/.homelab-apps-checkout"
-}
-
-# ============================================================
-# Age key pair — generated once, stored in age.key (gitignored)
-# ============================================================
-#
-# age-keygen writes the private key to age.key and prints the public key
-# to stdout. We capture the public key and write it into .sops.yaml so
-# SOPS knows which key to use for encryption.
-#
-# ignore_changes = all ensures this runs exactly once — the key is stable
-# across all subsequent applies.
-
-resource "terraform_data" "age_keygen" {
-  lifecycle {
-    ignore_changes = all
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      if [ ! -f age.key ]; then
-        age-keygen -o age.key
-      fi
-      PUBLIC_KEY=$(age-keygen -y age.key)
-      cat > .sops.yaml <<SOPS
-creation_rules:
-  - path_regex: talsecret\.sops\.yaml$$
-    age: >-
-      $PUBLIC_KEY
-SOPS
-    EOT
-    working_dir = path.module
-  }
-}
-
-# ============================================================
-# Cluster secrets — generated and encrypted once
-# ============================================================
-#
-# talhelper gensecret generates fresh cluster CA keys and bootstrap tokens.
-# sops encrypts the result using the age public key from .sops.yaml.
-# The encrypted file is safe to commit — the private key (age.key) stays local.
-#
-# ignore_changes = all ensures secrets are never rotated unintentionally.
-# To rotate: delete talsecret.sops.yaml and re-run terraform apply.
-
-resource "terraform_data" "talsecret" {
-  lifecycle {
-    ignore_changes = all
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      if [ ! -f talsecret.sops.yaml ]; then
-        talhelper gensecret | \
-          SOPS_AGE_KEY_FILE=age.key sops --encrypt --input-type yaml --output-type yaml /dev/stdin \
-          > talsecret.sops.yaml
-      fi
-    EOT
-    working_dir = path.module
-  }
-
-  depends_on = [terraform_data.age_keygen]
 }
 
 # ============================================================
@@ -154,210 +89,205 @@ module "worker_vms" {
 }
 
 # ============================================================
-# talconfig.yaml — written from template
+# Talos machine secrets — cluster CA, bootstrap token, etc.
 # ============================================================
 #
-# Terraform renders talconfig.yaml from the .tftpl template using your variables.
-# talhelper reads this file to know what cluster to build and what nodes to configure.
-#
-# Do not edit talconfig.yaml by hand — it will be overwritten on the next
-# 'terraform apply'. Change your values in terraform.tfvars instead.
+# Generated once and stored only in Terraform state (never committed — same
+# trust model this repo already uses for the Proxmox API token and the
+# ArgoCD deploy key's private key). To rotate: `terraform taint
+# talos_machine_secrets.this` and re-apply.
 
-resource "local_file" "talconfig" {
-  filename        = "${path.module}/talconfig.yaml"
-  file_permission = "0644"
-
-  content = templatefile("${path.module}/templates/talconfig.yaml.tftpl", {
-    cluster_name           = var.cluster_name
-    talos_version          = var.talos_version
-    kubernetes_version     = var.kubernetes_version
-    cluster_endpoint       = local.cluster_endpoint
-    cluster_vip            = var.cluster_vip
-    install_disk           = var.install_disk
-    control_plane_nodes    = var.control_plane_nodes
-    worker_nodes           = var.worker_nodes
-    gateway                = var.node_network_gateway
-    prefix_length          = var.node_network_prefix_length
-    dns_servers            = var.dns_servers
-    allow_scheduling_on_cp = local.allow_scheduling_on_cp
-  })
+resource "talos_machine_secrets" "this" {
+  talos_version = var.talos_version
 }
 
 # ============================================================
-# talhelper genconfig — generate per-node Talos machine configs
+# Machine config patches
 # ============================================================
 #
-# talhelper reads talconfig.yaml + talsecret.sops.yaml and writes one machine
-# config YAML per node into clusterconfig/. talhelper decrypts the SOPS file
-# automatically using the age key at ~/.config/sops/age/keys.txt (or whichever
-# key is configured in SOPS_AGE_KEY_FILE).
-#
-# triggers_replace: this resource re-runs whenever talconfig.yaml's content
-# changes. Terraform detects the change, destroys the old resource, and runs
-# the new one — causing genconfig to regenerate all machine configs.
-#
-# Prerequisite: talsecret.sops.yaml must exist in this directory.
-# Generate and encrypt it once with:
-#   talhelper gensecret > talsecret.sops.yaml
-#   sops --encrypt --in-place talsecret.sops.yaml
-# Then commit talsecret.sops.yaml — it is safe to store in git.
+# Raw Talos machine config fragments, built from your variables instead of
+# talhelper's talconfig.yaml. Patches applied uniformly to every node
+# (control plane and worker alike) vs. the control-plane-only scheduling
+# flag vs. per-node network identity are kept as separate locals so each can
+# be wired into the right data source / resource below.
 
-resource "terraform_data" "talhelper_genconfig" {
-  triggers_replace = [local_file.talconfig.content]
-
-  provisioner "local-exec" {
-    command     = "talhelper genconfig --secret-file talsecret.sops.yaml --out-dir clusterconfig"
-    working_dir = path.module
-    environment = {
-      SOPS_AGE_KEY_FILE = local.age_key_file
-    }
-  }
-
-  depends_on = [terraform_data.talsecret]
-}
-
-# ============================================================
-# Apply Talos machine configs to all nodes
-# ============================================================
-#
-# talhelper gencommand apply generates the talosctl commands needed to push
-# each node's machine config via the Talos API, one command per node.
-#
-# A node's config can only be applied one of two ways, and which one works
-# depends on whether Talos is already installed:
-#   - Freshly booted from the ISO, no disk install yet ("maintenance mode"):
-#     only the insecure (unauthenticated) API is up, so this requires
-#     --insecure — and since VMs are created in Proxmox before they finish
-#     booting, we must first wait for that API to come up.
-#   - Already installed and running from disk (e.g. re-running apply after
-#     changing talconfig.yaml on a live cluster): the insecure API refuses
-#     ApplyConfiguration with "already installed and booted from another
-#     medium". This requires a secure connection instead, authenticated via
-#     the talosconfig that talhelper generates alongside the machine configs.
-#
-# There's no way to know from Terraform which state a given node is in, so
-# for each generated command we try it securely first — this is what
-# succeeds for already-running nodes, and fails fast for fresh ones (no
-# cluster CA to trust yet). Only on that failure do we wait for maintenance
-# mode, retry with --insecure, and reboot — i.e. the original bootstrap path,
-# now scoped to just the nodes that actually need it instead of forced on
-# every node (including already-running ones) on every apply.
-#
-# This step requires all VMs to be powered on and reachable at their
-# configured IP addresses. If it fails because VMs aren't ready, Terraform
-# marks the resource as tainted — re-run 'terraform apply' once nodes are up.
-
-resource "terraform_data" "talos_apply" {
-  triggers_replace = [
-    terraform_data.talhelper_genconfig.id,
-    # Re-apply configs if any VM is recreated (its ID changes)
-    jsonencode({ for k, v in module.control_plane_vms : k => v.vm_id }),
-    jsonencode({ for k, v in module.worker_vms : k => v.vm_id }),
+locals {
+  # Applied to both control plane and worker machine configs.
+  common_config_patches = [
+    yamlencode({
+      machine = {
+        time    = { servers = ["time.cloudflare.com"] }
+        network = { nameservers = var.dns_servers }
+      }
+    }),
+    # MetalLB L2 mode requires strictARP so only the elected node responds to
+    # ARP for a given IP, preventing duplicate announcements from multiple nodes.
+    yamlencode({
+      cluster = {
+        proxy = {
+          extraArgs = {
+            proxy-mode      = "ipvs"
+            ipvs-strict-arp = "true"
+          }
+        }
+      }
+    }),
   ]
 
-  provisioner "local-exec" {
-    # Uses only POSIX sh syntax — Terraform local-exec runs under /bin/sh (dash on Linux).
-    command = <<-EOT
-      set -e
-      talhelper gencommand apply \
-        --config-file talconfig.yaml \
-        --out-dir clusterconfig \
-      | while IFS= read -r cmd; do
-          [ -z "$cmd" ] && continue
-          if eval "$cmd"; then
-            continue
-          fi
-          IP=$(echo "$cmd" | sed -n 's/.*--nodes=\([^ ]*\).*/\1/p')
-          echo ">> Secure apply failed for $IP, assuming maintenance mode. Waiting for insecure API..."
-          until talosctl version --insecure --nodes "$IP" >/dev/null 2>&1; do
-            sleep 10
-          done
-          eval "$cmd --insecure"
-          echo "Rebooting $IP..."
-          talosctl reboot --insecure --nodes "$IP" 2>/dev/null || true
-        done
-    EOT
-    working_dir = path.module
+  # allowSchedulingOnControlPlanes only makes sense on the controlplane config.
+  allow_scheduling_patch = yamlencode({
+    cluster = { allowSchedulingOnControlPlanes = local.allow_scheduling_on_cp }
+  })
+
+  # Per-node hostname/install-disk/network identity, keyed by node name so
+  # each talos_machine_configuration_apply instance can look up its own patch.
+  control_plane_network_patches = {
+    for node in var.control_plane_nodes : node.name => yamlencode({
+      machine = {
+        network = {
+          hostname = node.name
+          interfaces = [
+            merge(
+              {
+                deviceSelector = { driver = "virtio_net" }
+                dhcp           = false
+                addresses      = ["${node.ip}/${var.node_network_prefix_length}"]
+                routes         = [{ network = "0.0.0.0/0", gateway = var.node_network_gateway }]
+              },
+              var.cluster_vip != "" ? { vip = { ip = var.cluster_vip } } : {}
+            )
+          ]
+        }
+        install = { disk = var.install_disk }
+      }
+    })
   }
 
-  depends_on = [module.control_plane_vms, module.worker_vms]
+  worker_network_patches = {
+    for node in var.worker_nodes : node.name => yamlencode({
+      machine = {
+        network = {
+          hostname = node.name
+          interfaces = [
+            {
+              deviceSelector = { driver = "virtio_net" }
+              dhcp           = false
+              addresses      = ["${node.ip}/${var.node_network_prefix_length}"]
+              routes         = [{ network = "0.0.0.0/0", gateway = var.node_network_gateway }]
+            }
+          ]
+        }
+        install = { disk = var.install_disk }
+      }
+    })
+  }
+}
+
+# ============================================================
+# Machine configuration — one rendered config per machine type
+# ============================================================
+
+data "talos_machine_configuration" "controlplane" {
+  cluster_name       = var.cluster_name
+  cluster_endpoint   = "https://${local.cluster_endpoint}:6443"
+  machine_type       = "controlplane"
+  machine_secrets    = talos_machine_secrets.this.machine_secrets
+  kubernetes_version = var.kubernetes_version
+  talos_version      = var.talos_version
+  config_patches     = concat(local.common_config_patches, [local.allow_scheduling_patch])
+}
+
+data "talos_machine_configuration" "worker" {
+  cluster_name       = var.cluster_name
+  cluster_endpoint   = "https://${local.cluster_endpoint}:6443"
+  machine_type       = "worker"
+  machine_secrets    = talos_machine_secrets.this.machine_secrets
+  kubernetes_version = var.kubernetes_version
+  talos_version      = var.talos_version
+  config_patches     = local.common_config_patches
+}
+
+# ============================================================
+# Apply machine configs to nodes
+# ============================================================
+#
+# The provider handles both a freshly-booted node (insecure maintenance-mode
+# API) and an already-installed one (secure API via the cluster CA) itself —
+# no more manual "try secure, fall back to insecure, wait, retry, reboot"
+# shell dance.
+#
+# depends_on the VM modules: nodes must be powered on and reachable. If a VM
+# isn't up yet, this apply fails and simply isn't recorded in state — the
+# next 'terraform apply' retries automatically.
+
+resource "talos_machine_configuration_apply" "control_plane" {
+  for_each = { for node in var.control_plane_nodes : node.name => node }
+
+  client_configuration        = talos_machine_secrets.this.client_configuration
+  machine_configuration_input = data.talos_machine_configuration.controlplane.machine_configuration
+  node                        = each.value.ip
+  config_patches              = [local.control_plane_network_patches[each.key]]
+
+  depends_on = [module.control_plane_vms]
+}
+
+resource "talos_machine_configuration_apply" "worker" {
+  for_each = { for node in var.worker_nodes : node.name => node }
+
+  client_configuration        = talos_machine_secrets.this.client_configuration
+  machine_configuration_input = data.talos_machine_configuration.worker.machine_configuration
+  node                        = each.value.ip
+  config_patches              = [local.worker_network_patches[each.key]]
+
+  depends_on = [module.worker_vms]
 }
 
 # ============================================================
 # Bootstrap etcd
 # ============================================================
 #
-# Bootstrap initialises etcd on the first control plane node. This only needs
-# to happen once — Terraform tracks it in state and won't repeat it unless
-# the talos_apply resource changes (e.g. after a cluster rebuild).
-#
-# After bootstrap, the other control plane nodes join etcd automatically,
-# and workers join the cluster once their configs are applied.
+# Bootstraps etcd on the first control plane node. Only needs to happen
+# once — Terraform tracks it in state and won't repeat it.
 
-resource "terraform_data" "talos_bootstrap" {
-  triggers_replace = [terraform_data.talos_apply.id]
+resource "talos_machine_bootstrap" "this" {
+  node                 = var.control_plane_nodes[0].ip
+  client_configuration = talos_machine_secrets.this.client_configuration
 
-  provisioner "local-exec" {
-    # FIRST_CP_IP: the node bootstrap targets — must be responsive before we proceed.
-    # After config is applied, nodes reboot to install Talos to disk. We poll the
-    # authenticated Talos API (not --insecure) until the node is fully back up.
-    environment = {
-      FIRST_CP_IP = var.control_plane_nodes[0].ip
-    }
-    command = <<-EOT
-      echo "Waiting for $FIRST_CP_IP to come up after config apply and reboot..."
-      until talosctl --talosconfig clusterconfig/talosconfig \
-        --nodes "$FIRST_CP_IP" version >/dev/null 2>&1; do
-        sleep 10
-      done
-      echo "$FIRST_CP_IP is up, bootstrapping etcd..."
-      while true; do
-        OUTPUT=$(talhelper gencommand bootstrap \
-          --config-file talconfig.yaml \
-          --out-dir clusterconfig \
-          | bash 2>&1)
-        EXIT=$?
-        echo "$OUTPUT"
-        if [ $EXIT -eq 0 ]; then
-          break
-        elif echo "$OUTPUT" | grep -q "AlreadyExists"; then
-          echo "etcd already bootstrapped, continuing..."
-          break
-        fi
-        echo "Bootstrap not ready yet, retrying in 10s..."
-        sleep 10
-      done
-    EOT
-    working_dir = path.module
-  }
-
-  depends_on = [terraform_data.talos_apply]
+  depends_on = [talos_machine_configuration_apply.control_plane]
 }
 
 # ============================================================
-# Retrieve kubeconfig
+# Retrieve kubeconfig and talosconfig
 # ============================================================
 #
-# Saves the cluster kubeconfig to ./kubeconfig in this directory.
-# Copy it to ~/.kube/config (or use KUBECONFIG=./kubeconfig) to use kubectl.
+# local_file re-wraps the provider's in-state output onto disk so downstream
+# consumers (helm/kubernetes providers below, talosctl on the CLI) keep
+# working the same way they did with talhelper's generated files.
 
-resource "terraform_data" "talos_kubeconfig" {
-  triggers_replace = [terraform_data.talos_bootstrap.id]
+data "talos_client_configuration" "this" {
+  cluster_name         = var.cluster_name
+  client_configuration = talos_machine_secrets.this.client_configuration
+  nodes                = concat([for node in var.control_plane_nodes : node.ip], [for node in var.worker_nodes : node.ip])
+  endpoints            = [for node in var.control_plane_nodes : node.ip]
+}
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      rm -f ./kubeconfig
-      talhelper gencommand kubeconfig \
-        --config-file talconfig.yaml \
-        --out-dir clusterconfig \
-        --extra-flags "--merge=false --force" \
-        | sed 's/;$/ .\/kubeconfig;/' \
-        | bash
-    EOT
-    working_dir = path.module
-  }
+resource "talos_cluster_kubeconfig" "this" {
+  node                 = var.control_plane_nodes[0].ip
+  client_configuration = talos_machine_secrets.this.client_configuration
 
-  depends_on = [terraform_data.talos_bootstrap]
+  depends_on = [talos_machine_bootstrap.this]
+}
+
+resource "local_file" "kubeconfig" {
+  filename        = "${path.module}/kubeconfig"
+  file_permission = "0600"
+  content         = talos_cluster_kubeconfig.this.kubeconfig_raw
+}
+
+resource "local_file" "talosconfig" {
+  filename        = "${path.module}/talosconfig"
+  file_permission = "0600"
+  content         = data.talos_client_configuration.this.talos_config
 }
 
 # ============================================================
@@ -424,7 +354,7 @@ resource "helm_release" "argocd" {
     ignore_changes = all
   }
 
-  depends_on = [terraform_data.talos_kubeconfig]
+  depends_on = [local_file.kubeconfig]
 }
 
 # ============================================================
@@ -519,8 +449,8 @@ resource "helm_release" "homelab_bootstrap" {
 # tailscale-operator (installed by ArgoCD via infrastructure/tailscale-operator/
 # in the mono repo) needs this Secret to authenticate to the Tailscale API. The
 # mono repo intentionally doesn't create it — that would mean committing OAuth
-# credentials in the clear (unlike talsecret.sops.yaml, there's no SOPS setup
-# for arbitrary app secrets there). Terraform creates it directly instead.
+# credentials in the clear, and there's no encryption setup for arbitrary app
+# secrets there. Terraform creates it directly instead.
 #
 # Optional: only created when tailscale_oauth_client_id is set. If left empty,
 # create operator-oauth-secret.yaml.example manually and apply it — see the
@@ -533,7 +463,7 @@ resource "kubernetes_namespace" "tailscale" {
     name = "tailscale"
   }
 
-  depends_on = [terraform_data.talos_kubeconfig]
+  depends_on = [local_file.kubeconfig]
 }
 
 resource "kubernetes_secret" "tailscale_operator_oauth" {

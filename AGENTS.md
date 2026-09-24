@@ -5,8 +5,9 @@ Terraform project that provisions a homelab Kubernetes cluster on Proxmox using 
 ## What this manages
 
 - **Proxmox VMs** running Talos Linux (immutable, API-driven Kubernetes OS)
-- **talconfig.yaml** rendered from Terraform variables and a template
-- **talhelper** execution: config generation, applying to nodes, bootstrapping etcd, kubeconfig retrieval
+- **Talos machine configs**, generated and applied directly via the `siderolabs/talos`
+  provider: cluster secrets, per-node config, applying to nodes, bootstrapping etcd,
+  kubeconfig/talosconfig retrieval
 
 The cluster will run **Crossplane**, **Backstage**, and **ArgoCD** to manage all homelab resources.
 
@@ -26,7 +27,8 @@ Optional, only created when `tailscale_oauth_client_id` is set.
 | Provider | Purpose |
 |---|---|
 | `bpg/proxmox` | Create/manage Proxmox VMs, download ISO images |
-| `hashicorp/local` | Render and write `talconfig.yaml` from a template |
+| `siderolabs/talos` | Generate cluster secrets/machine configs, apply them to nodes, bootstrap etcd, retrieve kubeconfig/talosconfig |
+| `hashicorp/local` | Write the retrieved kubeconfig/talosconfig to disk |
 | `hashicorp/tls` | Generate the ArgoCD SSH deploy key pair |
 | `integrations/github` | Upload the deploy key to your mono repo |
 | `hashicorp/helm` | Install ArgoCD + bootstrap chart into the new cluster |
@@ -38,11 +40,9 @@ Optional, only created when `tailscale_oauth_client_id` is set.
 versions.tf                      # Provider version constraints
 providers.tf                     # Provider config (credentials via variables)
 variables.tf                     # All input variables with descriptions
-main.tf                          # Resources: ISO, VMs, talconfig, talhelper execution
+main.tf                          # Resources: ISO, VMs, Talos machine configs, bootstrap
 outputs.tf                       # VM MAC addresses, paths to kubeconfig/talosconfig
 terraform.tfvars.example         # Template — copy to terraform.tfvars and fill in
-templates/
-  talconfig.yaml.tftpl           # talhelper cluster definition template
 modules/
   proxmox_vm/                    # Reusable module: creates one Proxmox VM
 
@@ -51,25 +51,29 @@ modules/
                                   # you maintain yourself, don't rely on its contents persisting
 ```
 
-## talhelper workflow
+## Talos config workflow
 
-talhelper is a wrapper around talosctl that turns a single `talconfig.yaml` into per-node
-machine configs and the talosctl commands to apply/bootstrap them.
+The `siderolabs/talos` provider replaces talhelper — Terraform talks to the Talos API
+directly instead of shelling out to `talhelper`/`age`/`sops`. The chain, in `main.tf`:
 
-Terraform's role here:
-1. Generate the age keypair (`age.key`) and `.sops.yaml`, and generate + SOPS-encrypt
-   `talsecret.sops.yaml` — both run once via `terraform_data` resources with
-   `ignore_changes = all`, so they're stable across applies (see main.tf)
-2. Render `talconfig.yaml` from `templates/talconfig.yaml.tftpl` + your variables
-3. Run `talhelper genconfig` when `talconfig.yaml` changes
-4. Run the apply/bootstrap/kubeconfig commands in sequence
-5. If `argocd_github_repo` is set: create a GitHub deploy key and install ArgoCD via Helm
+1. `talos_machine_secrets` generates cluster CA/bootstrap secrets once (stored only in
+   Terraform state — see [State and secrets](#state-and-secrets))
+2. `data.talos_machine_configuration` renders one machine config per machine type
+   (controlplane/worker) from your variables, with config patches built as
+   `yamlencode(...)` locals instead of a talhelper template
+3. `talos_machine_configuration_apply` (one per node, `for_each`) applies each node's
+   config — the provider handles both a freshly-booted node (insecure maintenance-mode
+   API) and an already-installed one (secure API) itself
+4. `talos_machine_bootstrap` bootstraps etcd on the first control plane node
+5. `talos_cluster_kubeconfig` / `data.talos_client_configuration` retrieve the
+   kubeconfig/talosconfig, written to disk via `local_file`
+6. If `argocd_github_repo` is set: create a GitHub deploy key and install ArgoCD via Helm
 
 ## First-time setup
 
 ```bash
 # Install tools
-brew install age sops talhelper talosctl kubectl
+brew install talosctl kubectl
 
 # --- Terraform ---
 cp terraform.tfvars.example terraform.tfvars
@@ -77,14 +81,14 @@ $EDITOR terraform.tfvars
 tofu init
 ```
 
-The age keypair (`age.key` + `.sops.yaml`) and the SOPS-encrypted `talsecret.sops.yaml` are
-now generated automatically by `terraform_data` resources in `main.tf` on the first
-`tofu apply` — no manual `age-keygen`/`talhelper gensecret` step needed. Each is guarded by
-`ignore_changes = all`, so once created they're never regenerated or rotated by subsequent
-applies. Commit `.sops.yaml` and `talsecret.sops.yaml` after the first apply; `age.key`
-stays local (gitignored) since it's the private key.
+`talosctl` is optional — Terraform talks to the Talos API directly via the provider, so
+it's only needed for manual node debugging (`talosctl health`, `talosctl logs`, etc).
 
-To rotate cluster secrets: delete `talsecret.sops.yaml` and re-apply.
+Cluster secrets are generated automatically by `talos_machine_secrets` on the first
+`tofu apply` — no manual `age-keygen`/`talhelper gensecret`/`sops` step needed, and
+nothing to commit for it.
+
+To rotate cluster secrets: `tofu taint talos_machine_secrets.this && tofu apply`.
 
 ## Workflow
 
@@ -113,10 +117,9 @@ This project uses **OpenTofu** (`tofu`), not Terraform — same HCL and workflow
 
 ## Key design decisions
 
-- **`for_each` over `count`** for VMs: adding/removing a middle node only affects that node
-- **`terraform_data` + `local-exec`**: runs talhelper commands on the machine running Terraform
-- **`triggers_replace`** on each talhelper step: re-runs the command when inputs change, and Terraform retries failed commands on the next apply (nodes not ready = tainted resource = automatic retry)
-- **`local_file`** for `talconfig.yaml`: the file is owned by Terraform — edit the template and variables, not the generated file
+- **`for_each` over `count`** for VMs and machine config applies: adding/removing a middle node only affects that node
+- **Typed `talos_*` resources instead of shelling out**: a failed `talos_machine_configuration_apply`/`talos_machine_bootstrap` (e.g. a node not powered on yet) simply isn't recorded in state, so the next `tofu apply` retries automatically — no custom taint/retry scripting needed
+- **`local_file`** for kubeconfig/talosconfig: re-wraps the provider's in-state output onto disk for `talosctl`/`kubectl`/the `helm`+`kubernetes` providers to consume; the files themselves are never edited by hand, only regenerated
 
 ## Talos image schematic
 
@@ -128,17 +131,14 @@ For Tailscale at the OS level: also add `siderolabs/tailscale`
 
 | File | In git? | Contains |
 |---|---|---|
-| `talsecret.sops.yaml` | ✅ yes | SOPS-encrypted cluster secrets (safe to commit) |
-| `.sops.yaml` | ✅ yes | age public key + encryption rules (safe to commit) — written by `terraform_data.age_keygen` |
-| `age.key` | ❌ never | age private key — generated by `terraform_data.age_keygen`, stays local |
 | `terraform.tfvars` | ❌ never | Proxmox API token and IP addresses |
-| `terraform.tfstate` | ❌ never | Terraform state (contains Proxmox token and the ArgoCD deploy key's private key) |
-| `clusterconfig/` | ❌ never | Generated machine configs — recreated by Terraform |
-| `kubeconfig` | ❌ never | Cluster access credentials |
+| `terraform.tfstate` | ❌ never | Terraform state — contains cluster secrets generated by `talos_machine_secrets`, the Proxmox token, and the ArgoCD deploy key's private key |
+| `kubeconfig` | ❌ never | Cluster access credentials — regenerated by Terraform |
+| `talosconfig` | ❌ never | Talos client config — regenerated by Terraform |
 
-Note: talhelper normally decrypts SOPS files using the key at `~/.config/sops/age/keys.txt`,
-but this repo's `terraform_data` steps instead point `SOPS_AGE_KEY_FILE` at the local
-`age.key`, so no global SOPS key setup is required on the machine running Terraform.
+There's no more SOPS-encrypted file to commit: `talos_machine_secrets` generates cluster
+secrets and Terraform keeps them only in `terraform.tfstate`, the same trust model this
+repo already used for the Proxmox token and the ArgoCD deploy key's private key.
 
 `.homelab-apps-checkout/` (gitignored) holds a fresh clone of the mono repo, re-cloned on
 every apply by `terraform_data.homelab_apps_checkout` — never edit it by hand, it's

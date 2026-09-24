@@ -63,7 +63,7 @@ variable "talos_schematic_id" {
 }
 
 # ============================================================
-# Cluster definition (passed to talhelper / talconfig.yaml)
+# Cluster definition (passed to the talos provider's machine configs)
 # ============================================================
 
 variable "cluster_name" {

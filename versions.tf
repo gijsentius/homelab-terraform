@@ -7,7 +7,7 @@ terraform {
       version = "~> 0.77"
     }
 
-    # Writes files to the local filesystem (talconfig.yaml, ArgoCD manifests)
+    # Writes files to the local filesystem (kubeconfig, talosconfig)
     local = {
       source  = "hashicorp/local"
       version = "~> 2.5"
@@ -28,6 +28,13 @@ terraform {
     helm = {
       source  = "hashicorp/helm"
       version = "~> 2.17"
+    }
+
+    # Generates Talos machine secrets/configs and applies them to nodes,
+    # bootstraps etcd, and retrieves kubeconfig/talosconfig
+    talos = {
+      source  = "siderolabs/talos"
+      version = "~> 0.12"
     }
 
     # Creates the tailscale-operator OAuth credentials Secret directly in-cluster
