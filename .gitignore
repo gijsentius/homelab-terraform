@@ -23,9 +23,5 @@ kubeconfig
 *.kubeconfig
 talosconfig
 
-# Generated ArgoCD manifests — rendered from templates/, contain secrets or repo URLs
-argocd-root-app.yaml
-argocd-repo-secret.yaml
-
 # Mono repo, cloned fresh on every apply by terraform_data.homelab_apps_checkout
 .homelab-apps-checkout/

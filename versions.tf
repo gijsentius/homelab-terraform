@@ -4,7 +4,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.77"
+      version = "~> 0.100"
     }
 
     # Writes files to the local filesystem (kubeconfig, talosconfig)

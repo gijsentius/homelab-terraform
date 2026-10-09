@@ -82,7 +82,7 @@ worker_disk_gb   = 50
 # Terraform generates an SSH key pair, uploads the public key as a deploy key,
 # and installs the private key into the cluster as an ArgoCD repo credential.
 #
-# Before running terraform apply, export your gh CLI token:
+# Before running tofu apply, export your gh CLI token:
 #   export GITHUB_TOKEN=$(gh auth token)
 #   # Verify it has the 'repo' scope: gh auth status
 argocd_github_repo   = "yourname/homelab"

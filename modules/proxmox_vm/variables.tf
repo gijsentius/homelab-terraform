@@ -18,13 +18,8 @@ variable "datastore_id" {
   type        = string
 }
 
-variable "iso_datastore_id" {
-  description = "Storage pool where the Talos ISO lives"
-  type        = string
-}
-
 variable "talos_iso_file_id" {
-  description = "File ID of the uploaded Talos ISO, returned by proxmox_virtual_environment_download_file"
+  description = "File ID of the uploaded Talos ISO, returned by proxmox_download_file"
   type        = string
 }
 

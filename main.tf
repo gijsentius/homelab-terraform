@@ -58,7 +58,6 @@ module "control_plane_vms" {
   name              = each.value.name
   proxmox_node      = var.proxmox_node
   datastore_id      = var.proxmox_datastore_id
-  iso_datastore_id  = var.proxmox_iso_datastore_id
   talos_iso_file_id = proxmox_download_file.talos_iso.id
   cpu_cores         = var.control_plane_cpu_cores
   memory_mb         = var.control_plane_memory_mb
@@ -79,7 +78,6 @@ module "worker_vms" {
   name              = each.value.name
   proxmox_node      = var.proxmox_node
   datastore_id      = var.proxmox_datastore_id
-  iso_datastore_id  = var.proxmox_iso_datastore_id
   talos_iso_file_id = proxmox_download_file.talos_iso.id
   cpu_cores         = var.worker_cpu_cores
   memory_mb         = var.worker_memory_mb
@@ -94,7 +92,7 @@ module "worker_vms" {
 #
 # Generated once and stored only in Terraform state (never committed — same
 # trust model this repo already uses for the Proxmox API token and the
-# ArgoCD deploy key's private key). To rotate: `terraform taint
+# ArgoCD deploy key's private key). To rotate: `tofu taint
 # talos_machine_secrets.this` and re-apply.
 
 resource "talos_machine_secrets" "this" {
@@ -105,8 +103,8 @@ resource "talos_machine_secrets" "this" {
 # Machine config patches
 # ============================================================
 #
-# Raw Talos machine config fragments, built from your variables instead of
-# talhelper's talconfig.yaml. Patches applied uniformly to every node
+# Raw Talos machine config fragments, built from your variables. Patches
+# applied uniformly to every node
 # (control plane and worker alike) vs. the control-plane-only scheduling
 # flag vs. per-node network identity are kept as separate locals so each can
 # be wired into the right data source / resource below.
@@ -212,13 +210,11 @@ data "talos_machine_configuration" "worker" {
 # ============================================================
 #
 # The provider handles both a freshly-booted node (insecure maintenance-mode
-# API) and an already-installed one (secure API via the cluster CA) itself —
-# no more manual "try secure, fall back to insecure, wait, retry, reboot"
-# shell dance.
+# API) and an already-installed one (secure API via the cluster CA) itself.
 #
 # depends_on the VM modules: nodes must be powered on and reachable. If a VM
 # isn't up yet, this apply fails and simply isn't recorded in state — the
-# next 'terraform apply' retries automatically.
+# next 'tofu apply' retries automatically.
 
 resource "talos_machine_configuration_apply" "control_plane" {
   for_each = { for node in var.control_plane_nodes : node.name => node }
@@ -260,9 +256,8 @@ resource "talos_machine_bootstrap" "this" {
 # Retrieve kubeconfig and talosconfig
 # ============================================================
 #
-# local_file re-wraps the provider's in-state output onto disk so downstream
-# consumers (helm/kubernetes providers below, talosctl on the CLI) keep
-# working the same way they did with talhelper's generated files.
+# local_file re-wraps the provider's in-state output onto disk for downstream
+# consumers (helm/kubernetes providers below, talosctl/kubectl on the CLI).
 
 data "talos_client_configuration" "this" {
   cluster_name         = var.cluster_name

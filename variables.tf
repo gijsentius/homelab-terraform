@@ -226,13 +226,14 @@ variable "argocd_github_repo" {
     When set, Terraform will:
       1. Generate an ED25519 SSH key pair
       2. Upload the public key as a read-only deploy key to this repo
-      3. Store the private key as a Kubernetes Secret in the cluster
-      4. Create an ArgoCD Application pointing at the repo
+      3. Clone the repo into .homelab-apps-checkout/
+      4. Install ArgoCD, then the repo's apps/ chart (repo credential Secret,
+         AppProject and ApplicationSet)
 
     Requires GITHUB_TOKEN to be set in your environment:
       export GITHUB_TOKEN=$(gh auth token)
 
-    Leave empty to skip all GitHub and ArgoCD Application setup.
+    Leave empty to skip all GitHub and ArgoCD setup.
   EOT
   type    = string
   default = ""

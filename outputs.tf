@@ -25,7 +25,7 @@ output "worker_mac_addresses" {
 # ============================================================
 
 output "kubeconfig_path" {
-  description = "Path to the generated kubeconfig file (created after 'terraform apply' completes)"
+  description = "Path to the generated kubeconfig file (created after 'tofu apply' completes)"
   value       = "${path.module}/kubeconfig"
 }
 

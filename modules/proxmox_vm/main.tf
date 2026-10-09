@@ -50,10 +50,12 @@ resource "proxmox_virtual_environment_vm" "this" {
     type = "l26" # Linux kernel 2.6+ (the correct type for any modern Linux)
   }
 
-  # Talos does not run the standard QEMU guest agent — disabling it prevents
-  # the bpg/proxmox provider from hanging on state refresh waiting for agent responses.
+  # The Talos schematic includes the siderolabs/qemu-guest-agent extension, so
+  # Proxmox can report the VM's IP and shut it down gracefully. If you build a
+  # schematic without that extension, set this to false — otherwise the
+  # bpg/proxmox provider hangs waiting for an agent that never responds.
   agent {
-    enabled = false
+    enabled = true
   }
 
   lifecycle {
