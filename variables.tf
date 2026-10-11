@@ -282,3 +282,18 @@ variable "tailscale_oauth_client_secret" {
   default     = ""
 }
 
+
+# ============================================================
+# Maintenance
+# ============================================================
+
+variable "reboot_vms" {
+  description = <<-EOT
+    Reboot every cluster VM via the Proxmox API on this apply. Meant to be set
+    on the command line only, e.g. after creating DHCP reservations:
+      tofu apply -var reboot_vms=true -target=terraform_data.vm_reboot
+    Reboots again on every apply while true.
+  EOT
+  type        = bool
+  default     = false
+}

@@ -87,6 +87,44 @@ module "worker_vms" {
 }
 
 # ============================================================
+# On-demand VM reboot
+# ============================================================
+#
+# bpg/proxmox can only reboot a VM right after creation or when a config change
+# requires it — there's no "reboot now". This calls the Proxmox API directly
+# instead, e.g. so freshly-booted VMs pick up new DHCP reservations:
+#
+#   tofu apply -var reboot_vms=true -target=terraform_data.vm_reboot
+#
+# triggers_replace = timestamp(): reboots on every apply while reboot_vms is
+# true. The next plain apply (reboot_vms back to false) just removes these
+# resources from state — destroying them does nothing to the VMs.
+#
+# Uses /status/reboot (clean shutdown via the guest agent, then start), not a
+# hard reset. The API token needs VM.PowerMgmt — PVEVMAdmin includes it.
+
+resource "terraform_data" "vm_reboot" {
+  for_each = var.reboot_vms ? {
+    for node in concat(var.control_plane_nodes, var.worker_nodes) : node.name => node.vm_id
+  } : {}
+
+  triggers_replace = [timestamp()]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -fsS ${var.proxmox_tls_insecure ? "--insecure" : ""} -X POST \
+        -H "Authorization: PVEAPIToken=$PROXMOX_API_TOKEN" \
+        "${trimsuffix(var.proxmox_endpoint, "/")}/api2/json/nodes/${var.proxmox_node}/qemu/${each.value}/status/reboot"
+    EOT
+    environment = {
+      PROXMOX_API_TOKEN = var.proxmox_api_token
+    }
+  }
+
+  depends_on = [module.control_plane_vms, module.worker_vms]
+}
+
+# ============================================================
 # Talos machine secrets — cluster CA, bootstrap token, etc.
 # ============================================================
 #

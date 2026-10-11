@@ -36,6 +36,8 @@ versions.tf                 Provider version constraints
 terraform.tfvars.example    Copy to terraform.tfvars and fill in
 modules/
   proxmox_vm/               Creates one Proxmox VM from a Talos ISO
+scripts/
+  fritzbox-reserve-ips.sh   Optional, standalone: create FRITZ!Box DHCP reservations from a MAC → IP file
 .homelab-apps-checkout/     Gitignored — mono repo, re-cloned on every apply
 ```
 
@@ -156,11 +158,39 @@ tofu output worker_mac_addresses
 
 Go to your router and create a **DHCP reservation** for each MAC → IP pair matching what you set in `terraform.tfvars`. The IPs must match exactly — Talos machine configs are generated with those IPs baked in.
 
+### FRITZ!Box: create the reservations with a script
+
+On a FRITZ!Box, `scripts/fritzbox-reserve-ips.sh` creates the reservations from a plain MAC → IP file. It's standalone: Terraform doesn't run it. It uses [`fritz_lease.py`](https://github.com/jvejmelka/fritzbox-static-lease), downloaded at a pinned, checksummed commit into a gitignored virtualenv in `.fritzbox-static-lease/`.
+
+FRITZ!Box's official API (TR-064) can't set reservations, so this relies on the box's **undocumented** internal API. It's tested upstream on FRITZ!OS 8.25 only, and a FRITZ!OS update can break it. If it fails, set the reservations by hand in the UI.
+
+One-time setup: in the FRITZ!Box UI, create a dedicated user under **System → FRITZ!Box Users** with the **FRITZ!Box Settings** permission. Turn off the extra confirmation (button press/phone) for that user, or writes are silently discarded.
+
+The VMs must have booted at least once first: the FRITZ!Box can only pin devices it has seen on the network.
+
+```bash
+cp scripts/fritzbox-reservations.txt.example scripts/fritzbox-reservations.txt
+$EDITOR scripts/fritzbox-reservations.txt   # MACs from the outputs above, IPs from terraform.tfvars
+
+export FRITZ_USER=terraform                  # the user created above
+./scripts/fritzbox-reserve-ips.sh            # prompts for the password
+```
+
+### Reboot the VMs onto their reserved IPs
+
+The VMs keep their current DHCP lease until they restart. Reboot them all via the Proxmox API:
+
+```bash
+tofu apply -var reboot_vms=true -target=terraform_data.vm_reboot
+```
+
+The next plain `tofu apply` shows these `terraform_data.vm_reboot` entries being destroyed. That's expected and does nothing to the VMs.
+
 ---
 
 ## Step 3 — Boot the VMs into Talos maintenance mode
 
-Power on the VMs in the Proxmox web UI. Open the console on one — you should see the Talos boot screen within a minute. Talos waits in **maintenance mode** until it receives a machine config.
+The VMs start automatically when they're created. Open the console on one in the Proxmox web UI — you should see the Talos boot screen within a minute. Talos waits in **maintenance mode** until it receives a machine config.
 
 Wait until all nodes are reachable before continuing:
 

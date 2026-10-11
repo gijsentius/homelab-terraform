@@ -1,0 +1,7 @@
+# One reservation per line: <MAC> <IP>   # comment
+# Copy to fritzbox-reservations.txt (gitignored). MACs come from
+# 'tofu output control_plane_mac_addresses' / 'tofu output worker_mac_addresses',
+# IPs must match control_plane_nodes / worker_nodes in terraform.tfvars.
+BC:24:11:00:00:10  192.168.1.110   # cp-0
+BC:24:11:00:00:20  192.168.1.120   # worker-0
+BC:24:11:00:00:21  192.168.1.121   # worker-1

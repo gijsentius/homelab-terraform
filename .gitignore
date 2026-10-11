@@ -25,3 +25,7 @@ talosconfig
 
 # Mono repo, cloned fresh on every apply by terraform_data.homelab_apps_checkout
 .homelab-apps-checkout/
+
+# fritz_lease.py + its venv, downloaded by scripts/fritzbox-reserve-ips.sh
+.fritzbox-static-lease/
+scripts/fritzbox-reservations.txt

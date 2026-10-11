@@ -45,6 +45,9 @@ outputs.tf                       # VM MAC addresses, paths to kubeconfig/talosco
 terraform.tfvars.example         # Template — copy to terraform.tfvars and fill in
 modules/
   proxmox_vm/                    # Reusable module: creates one Proxmox VM
+scripts/
+  fritzbox-reserve-ips.sh        # Optional, standalone (not run by Terraform): create
+                                  # FRITZ!Box DHCP reservations from fritzbox-reservations.txt
 
 .homelab-apps-checkout/          # Gitignored — mono repo cloned fresh here on every apply
                                   # by terraform_data.homelab_apps_checkout; not a sibling dir
@@ -100,7 +103,11 @@ tofu output control_plane_mac_addresses
 tofu output worker_mac_addresses
 
 # → Configure DHCP reservations in your router: MAC → static IP
-# → Power on the VMs in Proxmox, wait for them to boot into Talos maintenance mode
+#    On a FRITZ!Box, once the VMs have booted, fill in
+#    scripts/fritzbox-reservations.txt and run: FRITZ_USER=... ./scripts/fritzbox-reserve-ips.sh
+# → Reboot the VMs so they pick up their reserved IPs:
+tofu apply -var reboot_vms=true -target=terraform_data.vm_reboot
+# → Wait for the VMs (started automatically) to boot into Talos maintenance mode
 #    (you should see the Talos console on the Proxmox VM screen)
 
 # Phase 2: generate configs, apply to nodes, bootstrap, get kubeconfig
