@@ -29,3 +29,9 @@ talosconfig
 # fritz_lease.py + its venv, downloaded by scripts/fritzbox-reserve-ips.sh
 .fritzbox-static-lease/
 scripts/fritzbox-reservations.txt
+
+# ---- Secrets ----
+
+# Plaintext secrets — only the sops-encrypted secrets.enc.yaml is committed
+secrets.yaml
+secrets.dec.yaml

@@ -1,12 +1,17 @@
 # Copy this file to terraform.tfvars and fill in your values.
-# terraform.tfvars is gitignored — it contains secrets and environment-specific values.
+# terraform.tfvars is gitignored — it contains environment-specific values.
+#
+# Secrets (Proxmox API token, Tailscale OAuth client) don't go here: they live
+# sops-encrypted in secrets.enc.yaml and reach tofu as TF_VAR_* environment
+# variables via ./scripts/tofu.sh. Setting them here as well would override
+# those, since tfvars takes precedence over the environment.
 
 # ============================================================
 # Proxmox connection
 # ============================================================
 
 proxmox_endpoint     = "https://192.168.1.10:8006"   # Your Proxmox machine's LAN IP
-proxmox_api_token    = "root@pam!terraform=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# proxmox_api_token comes from secrets.enc.yaml
 proxmox_tls_insecure = true                           # Set to false if you have a valid TLS cert
 proxmox_node         = "pve"                          # Your Proxmox node name (shown in the UI sidebar)
 
@@ -92,9 +97,9 @@ argocd_repo_revision = "HEAD"
 # Tailscale operator
 # ============================================================
 
-# Create an OAuth client at https://login.tailscale.com/admin/settings/oauth,
-# grant it "Devices: write" scope, and tag it "tag:k8s". Leave both empty to
-# skip — you'd then need to create the operator-oauth Secret manually instead
-# (see operator-oauth-secret.yaml.example in the mono repo).
-tailscale_oauth_client_id     = ""
-tailscale_oauth_client_secret = ""
+# tailscale_oauth_client_id/tailscale_oauth_client_secret come from
+# secrets.enc.yaml. Create an OAuth client at
+# https://login.tailscale.com/admin/settings/oauth, grant it "Devices: write"
+# scope, and tag it "tag:k8s". Leave both empty to skip — you'd then need to
+# create the operator-oauth Secret manually instead (see
+# operator-oauth-secret.yaml.example in the mono repo).

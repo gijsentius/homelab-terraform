@@ -1,0 +1,7 @@
+# sops encrypts secrets.enc.yaml to these age recipients. Only public keys live
+# here — add a line per machine/person that should be able to decrypt, then run
+# `sops updatekeys secrets.enc.yaml` to re-encrypt for the new list.
+creation_rules:
+  - path_regex: secrets\.enc\.yaml$
+    age: >-
+      age12e08xk97g4mjlj9nsn20xvdneqy5svtwcu52tflxlffqftznlu7s5zn7at
