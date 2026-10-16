@@ -23,7 +23,7 @@ proxmox_iso_datastore_id = "local"      # For ISO files (must support 'iso'    c
 # Talos image
 # ============================================================
 
-talos_version = "v1.9.5"
+talos_version = "v1.14.4"  # v1.14+ required (multi-document machine config)
 
 # Generate your schematic at https://factory.talos.dev/
 # Add 'siderolabs/qemu-guest-agent' at minimum for Proxmox.
@@ -35,7 +35,7 @@ talos_schematic_id = "ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d6
 # ============================================================
 
 cluster_name       = "homelab"
-kubernetes_version = "v1.32.3"
+kubernetes_version = "v1.37.1"
 
 # VIP for the Kubernetes API server — floats between healthy control plane nodes.
 # Only useful with 3+ control planes. Leave empty for a single control plane.

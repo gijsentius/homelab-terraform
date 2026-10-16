@@ -47,9 +47,13 @@ variable "proxmox_iso_datastore_id" {
 # ============================================================
 
 variable "talos_version" {
-  description = "Talos Linux version to deploy. See https://github.com/siderolabs/talos/releases"
+  description = <<-EOT
+    Talos Linux version to deploy. See https://github.com/siderolabs/talos/releases
+    Must be v1.14 or newer: the machine config patches in main.tf use the
+    multi-document config format (HostnameConfig, UnattendedInstallConfig, ...).
+  EOT
   type        = string
-  default     = "v1.9.5"
+  default     = "v1.14.4"
 }
 
 variable "talos_schematic_id" {
@@ -76,10 +80,10 @@ variable "kubernetes_version" {
   description = <<-EOT
     Kubernetes version to install. Must be compatible with your Talos version —
     check the Talos release notes for the supported range.
-    Talos v1.9.x supports Kubernetes v1.29–v1.32.
+    v1.37.1 is the default Kubernetes version for Talos v1.14.4.
   EOT
   type        = string
-  default     = "v1.32.3"
+  default     = "v1.37.1"
 }
 
 variable "cluster_vip" {

@@ -148,74 +148,119 @@ resource "talos_machine_secrets" "this" {
 # be wired into the right data source / resource below.
 
 locals {
+  # Talos >= 1.14 generates multi-document configs: hostname, resolver,
+  # install, kube-proxy, etc. each live in their own document, and setting the
+  # same thing through the legacy v1alpha1 fields (machine.install,
+  # machine.network.hostname, ...) is rejected as a conflict. So patches below
+  # target those documents; a patch document merges into the generated one
+  # with the same kind.
+
   # Applied to both control plane and worker machine configs.
   common_config_patches = [
-    yamlencode({
-      machine = {
-        time    = { servers = ["time.cloudflare.com"] }
-        network = { nameservers = var.dns_servers }
-      }
-    }),
-    # MetalLB L2 mode requires strictARP so only the elected node responds to
-    # ARP for a given IP, preventing duplicate announcements from multiple nodes.
-    yamlencode({
-      cluster = {
-        proxy = {
-          extraArgs = {
-            proxy-mode      = "ipvs"
-            ipvs-strict-arp = "true"
-          }
-        }
-      }
-    }),
+    join("---\n", [
+      yamlencode({
+        apiVersion = "v1alpha1"
+        kind       = "TimeSyncConfig"
+        ntp        = { servers = ["time.cloudflare.com"] }
+      }),
+      yamlencode({
+        apiVersion  = "v1alpha1"
+        kind        = "ResolverConfig"
+        nameservers = [for ns in var.dns_servers : { address = ns }]
+      }),
+    ]),
   ]
 
-  # allowSchedulingOnControlPlanes only makes sense on the controlplane config.
+  # KubeProxyConfig is only allowed on control plane machines.
+  # MetalLB L2 mode requires strictARP so only the elected node responds to
+  # ARP for a given IP, preventing duplicate announcements from multiple nodes.
+  kube_proxy_patch = yamlencode({
+    apiVersion = "v1alpha1"
+    kind       = "KubeProxyConfig"
+    mode       = "ipvs"
+    config     = { ipvs = { strictARP = true } }
+  })
+
+  # When there are no workers, control plane nodes must run workloads too:
+  # drop the control-plane NoSchedule taint from the generated KubeNodeConfig.
   allow_scheduling_patch = yamlencode({
-    cluster = { allowSchedulingOnControlPlanes = local.allow_scheduling_on_cp }
+    apiVersion = "v1alpha1"
+    kind       = "KubeNodeConfig"
+    taints     = { "node-role.kubernetes.io/control-plane" = { "$patch" = "delete" } }
+  })
+
+  control_plane_config_patches = concat(
+    local.common_config_patches,
+    [local.kube_proxy_patch],
+    local.allow_scheduling_on_cp ? [local.allow_scheduling_patch] : [],
+  )
+
+  # Install from the image factory with our schematic, so the installed system
+  # keeps the extensions the ISO was built with (qemu-guest-agent).
+  install_patch = yamlencode({
+    apiVersion = "v1alpha1"
+    kind       = "UnattendedInstallConfig"
+    installer  = { image = "factory.talos.dev/metal-installer/${var.talos_schematic_id}:${var.talos_version}" }
+    provisioning = {
+      diskSelector = { match = "disk.dev_path == \"${var.install_disk}\"" }
+    }
   })
 
   # Per-node hostname/install-disk/network identity, keyed by node name so
   # each talos_machine_configuration_apply instance can look up its own patch.
   control_plane_network_patches = {
-    for node in var.control_plane_nodes : node.name => yamlencode({
-      machine = {
-        network = {
-          hostname = node.name
-          interfaces = [
-            merge(
+    for node in var.control_plane_nodes : node.name => join("---\n", [
+      yamlencode({
+        machine = {
+          network = {
+            interfaces = [
+              merge(
+                {
+                  deviceSelector = { driver = "virtio_net" }
+                  dhcp           = false
+                  addresses      = ["${node.ip}/${var.node_network_prefix_length}"]
+                  routes         = [{ network = "0.0.0.0/0", gateway = var.node_network_gateway }]
+                },
+                var.cluster_vip != "" ? { vip = { ip = var.cluster_vip } } : {}
+              )
+            ]
+          }
+        }
+      }),
+      yamlencode({
+        apiVersion = "v1alpha1"
+        kind       = "HostnameConfig"
+        auto       = "off"
+        hostname   = node.name
+      }),
+      local.install_patch,
+    ])
+  }
+
+  worker_network_patches = {
+    for node in var.worker_nodes : node.name => join("---\n", [
+      yamlencode({
+        machine = {
+          network = {
+            interfaces = [
               {
                 deviceSelector = { driver = "virtio_net" }
                 dhcp           = false
                 addresses      = ["${node.ip}/${var.node_network_prefix_length}"]
                 routes         = [{ network = "0.0.0.0/0", gateway = var.node_network_gateway }]
-              },
-              var.cluster_vip != "" ? { vip = { ip = var.cluster_vip } } : {}
-            )
-          ]
+              }
+            ]
+          }
         }
-        install = { disk = var.install_disk }
-      }
-    })
-  }
-
-  worker_network_patches = {
-    for node in var.worker_nodes : node.name => yamlencode({
-      machine = {
-        network = {
-          hostname = node.name
-          interfaces = [
-            {
-              deviceSelector = { driver = "virtio_net" }
-              dhcp           = false
-              addresses      = ["${node.ip}/${var.node_network_prefix_length}"]
-              routes         = [{ network = "0.0.0.0/0", gateway = var.node_network_gateway }]
-            }
-          ]
-        }
-        install = { disk = var.install_disk }
-      }
-    })
+      }),
+      yamlencode({
+        apiVersion = "v1alpha1"
+        kind       = "HostnameConfig"
+        auto       = "off"
+        hostname   = node.name
+      }),
+      local.install_patch,
+    ])
   }
 }
 
@@ -230,7 +275,7 @@ data "talos_machine_configuration" "controlplane" {
   machine_secrets    = talos_machine_secrets.this.machine_secrets
   kubernetes_version = var.kubernetes_version
   talos_version      = var.talos_version
-  config_patches     = concat(local.common_config_patches, [local.allow_scheduling_patch])
+  config_patches     = local.control_plane_config_patches
 }
 
 data "talos_machine_configuration" "worker" {

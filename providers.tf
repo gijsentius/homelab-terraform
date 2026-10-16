@@ -14,14 +14,23 @@ provider "github" {
   owner = local.github_owner
 }
 
+# Credentials come straight from talos_cluster_kubeconfig rather than the
+# ./kubeconfig file: config_path is checked during plan, before the cluster
+# (and the file) exist, which fails the whole run.
 provider "helm" {
   kubernetes {
-    config_path = "${path.module}/kubeconfig"
+    host                   = talos_cluster_kubeconfig.this.kubernetes_client_configuration.host
+    cluster_ca_certificate = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.ca_certificate)
+    client_certificate     = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.client_certificate)
+    client_key             = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.client_key)
   }
 }
 
 provider "kubernetes" {
-  config_path = "${path.module}/kubeconfig"
+  host                   = talos_cluster_kubeconfig.this.kubernetes_client_configuration.host
+  cluster_ca_certificate = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.ca_certificate)
+  client_certificate     = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.client_certificate)
+  client_key             = base64decode(talos_cluster_kubeconfig.this.kubernetes_client_configuration.client_key)
 }
 
 # The talos provider needs no static config — client credentials are passed
