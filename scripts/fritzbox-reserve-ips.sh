@@ -56,10 +56,15 @@ while read -r mac ip _; do
   [[ -z "$mac" || "$mac" == \#* ]] && continue
   echo "==> ${mac} → ${ip}"
 
-  # --ip is a global option, so it goes before the subcommand
+  # --ip is a global option, so it goes before the subcommand. Some FRITZ!OS
+  # versions reject 'ip' on the REST write ("bad value", field ip), so fall
+  # back to the legacy data.lua form, which sets the IP via dev_ip.
   if ! "${cache_dir}/venv/bin/python" "$fritz_lease" --ip "$ip" pin "$mac"; then
-    failed=1
-    continue
+    echo "    REST write failed, retrying via data.lua" >&2
+    if ! "${cache_dir}/venv/bin/python" "$fritz_lease" --via datalua --ip "$ip" pin "$mac"; then
+      failed=1
+      continue
+    fi
   fi
 
   # fritz_lease.py only verifies the static flag, so check the IP ourselves.
