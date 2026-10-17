@@ -336,6 +336,34 @@ resource "talos_machine_bootstrap" "this" {
 }
 
 # ============================================================
+# Wait for the cluster to become healthy
+# ============================================================
+#
+# After bootstrap the nodes still install to disk, reboot and start etcd and
+# the Kubernetes control plane — the API server isn't reachable for a few
+# minutes. Everything that talks to Kubernetes (Helm, the kubernetes provider)
+# depends on this health check instead of racing the API server.
+#
+# Being a data source, it re-runs on every plan: a node that's down or hasn't
+# joined fails the plan until it's back (or removed from the node variables).
+
+data "talos_cluster_health" "this" {
+  client_configuration = talos_machine_secrets.this.client_configuration
+  control_plane_nodes  = [for node in var.control_plane_nodes : node.ip]
+  worker_nodes         = [for node in var.worker_nodes : node.ip]
+  endpoints            = [for node in var.control_plane_nodes : node.ip]
+
+  timeouts = {
+    read = "15m"
+  }
+
+  depends_on = [
+    talos_machine_bootstrap.this,
+    talos_machine_configuration_apply.worker,
+  ]
+}
+
+# ============================================================
 # Retrieve kubeconfig and talosconfig
 # ============================================================
 #
@@ -432,7 +460,7 @@ resource "helm_release" "argocd" {
     ignore_changes = all
   }
 
-  depends_on = [local_file.kubeconfig]
+  depends_on = [local_file.kubeconfig, data.talos_cluster_health.this]
 }
 
 # ============================================================
@@ -541,7 +569,7 @@ resource "kubernetes_namespace" "tailscale" {
     name = "tailscale"
   }
 
-  depends_on = [local_file.kubeconfig]
+  depends_on = [local_file.kubeconfig, data.talos_cluster_health.this]
 }
 
 resource "kubernetes_secret" "tailscale_operator_oauth" {
