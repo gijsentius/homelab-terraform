@@ -168,6 +168,16 @@ locals {
         kind        = "ResolverConfig"
         nameservers = [for ns in var.dns_servers : { address = ns }]
       }),
+      # Backing directory for local-path-provisioner (deployed by ArgoCD).
+      # A 'directory' user volume lives on the EPHEMERAL partition, so no extra
+      # disk is needed, and Talos mounts it at /var/mnt/local-path-provisioner
+      # where the kubelet can see it. Applies live, no reboot or reinstall.
+      yamlencode({
+        apiVersion = "v1alpha1"
+        kind       = "UserVolumeConfig"
+        name       = "local-path-provisioner"
+        volumeType = "directory"
+      }),
     ]),
   ]
 
