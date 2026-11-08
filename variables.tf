@@ -207,9 +207,14 @@ variable "worker_cpu_cores" {
 }
 
 variable "worker_memory_mb" {
-  description = "RAM in MB per worker node. 8192 (8 GB) supports Crossplane + ArgoCD comfortably."
+  description = <<-EOT
+    RAM in MB per worker node. 12288 (12 GB) leaves room for the media apps
+    (plex transcoding, sabnzbd unpacking) next to the platform. Without memory
+    hotplug a change needs a VM restart, which the provider does on apply; see
+    "Resizing workers" in the README to do it one worker at a time.
+  EOT
   type        = number
-  default     = 8192
+  default     = 12288
 }
 
 variable "worker_disk_gb" {

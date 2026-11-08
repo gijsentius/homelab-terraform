@@ -417,23 +417,40 @@ To log in yourself, add your public key to `nfs_server.ssh_public_keys` and
 
 ---
 
-## Growing worker disks
+## Resizing workers
 
-`worker_disk_gb` (default 300) only grows. If your `<site>.tfvars` sets it,
-update it there, then:
+`worker_memory_mb` (default 12288, 12 GB) and `worker_disk_gb` (default 300,
+grow-only) apply to every worker. If your `<site>.tfvars` sets them, update
+them there.
+
+A memory change only takes effect after Proxmox restarts the VM, and the
+provider does that restart itself during apply. A plain apply would restart
+all workers at about the same time, so apply one worker at a time and wait
+for it to be back before the next:
 
 ```bash
-./scripts/tofu.sh apply   # Proxmox resizes the disks in place
+./scripts/tofu.sh apply -target='module.worker_vms["worker-0"]'
+kubectl get nodes -w     # wait for worker-0 to be Ready again
+./scripts/tofu.sh apply -target='module.worker_vms["worker-1"]'
 ```
 
-Talos grows the EPHEMERAL partition, which also holds the local-path
-volumes, into the new space when the node next boots. Reboot the workers one
-at a time:
+Make sure the Proxmox host has the RAM: workers × 12 GB, plus the control
+planes and the NFS VM.
+
+The restart also lets Talos grow the EPHEMERAL partition (which holds the
+local-path volumes) into a bigger disk. A disk-only change doesn't restart
+the VM, so reboot each worker yourself afterwards:
 
 ```bash
 export TALOSCONFIG=$(pwd)/talosconfig
-talosctl -n <worker-ip> reboot          # waits until the node is back
-talosctl -n <worker-ip> get volumestatus EPHEMERAL   # SIZE should be ~300 GB
+talosctl -n <worker-ip> reboot                       # waits until the node is back
+```
+
+Either way, check the result per worker:
+
+```bash
+talosctl -n <worker-ip> get volumestatus EPHEMERAL   # SIZE ~300 GB
+kubectl get node <worker> -o jsonpath='{.status.capacity.memory}'   # ~12 GiB
 ```
 
 ---

@@ -80,7 +80,7 @@ control_plane_memory_mb = 4096
 control_plane_disk_gb   = 20
 
 worker_cpu_cores = 4
-worker_memory_mb = 8192
+worker_memory_mb = 12288  # restarts the VM; apply per worker (README)
 worker_disk_gb   = 300  # grow-only; reboot workers afterwards (README)
 
 # ============================================================
