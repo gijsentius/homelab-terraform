@@ -257,7 +257,7 @@ variable "argocd_chart_version" {
     git using that pin, not this variable, so keep the two in sync manually.
   EOT
   type        = string
-  default     = "7.8.23"
+  default     = "10.10.5"
 }
 
 # ============================================================
