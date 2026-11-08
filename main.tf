@@ -3,6 +3,16 @@
 # ============================================================
 
 locals {
+  # Which homelab-apps site (clusters/<site>/) this state belongs to. One
+  # OpenTofu workspace per site, selected by scripts/tofu.sh from $SITE.
+  # site-a predates multi-site support, so its state stays in "default".
+  site = terraform.workspace == "default" ? "site-a" : terraform.workspace
+
+  # Appended to per-site names that must not collide between sites (local
+  # kubeconfig/talosconfig files, deploy key title). Empty for site-a so its
+  # existing files and resources keep their names.
+  site_suffix = local.site == "site-a" ? "" : "-${local.site}"
+
   # Use the VIP as the cluster endpoint when configured; otherwise fall back to
   # the first control plane node's IP. kubectl and Talos use this address to
   # reach the API server.
@@ -395,13 +405,13 @@ resource "talos_cluster_kubeconfig" "this" {
 }
 
 resource "local_file" "kubeconfig" {
-  filename        = "${path.module}/kubeconfig"
+  filename        = "${path.module}/kubeconfig${local.site_suffix}"
   file_permission = "0600"
   content         = talos_cluster_kubeconfig.this.kubeconfig_raw
 }
 
 resource "local_file" "talosconfig" {
-  filename        = "${path.module}/talosconfig"
+  filename        = "${path.module}/talosconfig${local.site_suffix}"
   file_permission = "0600"
   content         = data.talos_client_configuration.this.talos_config
 }
@@ -424,7 +434,7 @@ resource "tls_private_key" "argocd_deploy_key" {
 resource "github_repository_deploy_key" "argocd" {
   count = var.argocd_github_repo != "" ? 1 : 0
 
-  title      = "ArgoCD — ${var.cluster_name}"
+  title      = "ArgoCD — ${var.cluster_name}${local.site_suffix}"
   repository = local.github_repo
   key        = tls_private_key.argocd_deploy_key[0].public_key_openssh
   read_only  = true
@@ -544,6 +554,13 @@ resource "helm_release" "homelab_bootstrap" {
   set {
     name  = "revision"
     value = var.argocd_repo_revision
+  }
+
+  # Picks clusters/<site>/ in the mono repo: this site's identity and per-site
+  # app overrides, and which apps run here (app.yaml sites lists).
+  set {
+    name  = "cluster"
+    value = local.site
   }
 
   set_sensitive {

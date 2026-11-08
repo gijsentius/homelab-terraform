@@ -1,5 +1,7 @@
-# Copy this file to terraform.tfvars and fill in your values.
-# terraform.tfvars is gitignored — it contains environment-specific values.
+# Copy this file to <site>.tfvars (site-a.tfvars, site-b.tfvars, ...) and fill
+# in that site's values; scripts/tofu.sh passes it based on $SITE. *.tfvars is
+# gitignored — it contains environment-specific values. Don't name it
+# terraform.tfvars: tofu would load it for every site.
 #
 # Secrets (Proxmox API token, Tailscale OAuth client) don't go here: they live
 # sops-encrypted in secrets.enc.yaml and reach tofu as TF_VAR_* environment
@@ -34,6 +36,8 @@ talos_schematic_id = "ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d6
 # Cluster definition
 # ============================================================
 
+# Must differ per site: it names the kubeconfig context (admin@<cluster_name>)
+# and the Talos context, so two sites with the same name collide.
 cluster_name       = "homelab"
 kubernetes_version = "v1.37.1"
 

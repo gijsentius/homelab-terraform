@@ -26,10 +26,10 @@ output "worker_mac_addresses" {
 
 output "kubeconfig_path" {
   description = "Path to the generated kubeconfig file (created after 'tofu apply' completes)"
-  value       = "${path.module}/kubeconfig"
+  value       = "${path.module}/kubeconfig${local.site_suffix}"
 }
 
 output "talosconfig_path" {
   description = "Path to the generated talosconfig file (use with talosctl --talosconfig)"
-  value       = "${path.module}/talosconfig"
+  value       = "${path.module}/talosconfig${local.site_suffix}"
 }
