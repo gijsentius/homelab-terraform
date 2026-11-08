@@ -20,7 +20,8 @@ tofu apply
   │     ├── ArgoCD repo credential Secret (SSH deploy key)
   │     ├── AppProject
   │     └── ApplicationSet → ArgoCD discovers and deploys everything else
-  └── Creates the tailscale-operator OAuth Secret (if configured)
+  ├── Creates the tailscale-operator OAuth Secret (if configured)
+  └── Creates the NFS server VM and configures its export (if nfs_server is set)
 ```
 
 This project uses [OpenTofu](https://opentofu.org/) (`tofu`), not Terraform — same HCL and workflow, different binary.
@@ -29,6 +30,9 @@ This project uses [OpenTofu](https://opentofu.org/) (`tofu`), not Terraform — 
 
 ```
 main.tf                     All resources: ISO, VMs, Talos bootstrap, ArgoCD
+nfs_server.tf               Optional NFS server VM for csi-driver-nfs
+templates/
+  nfs-server-setup.sh.tftpl Setup script run on the NFS server VM over SSH
 variables.tf                Input variables with descriptions
 outputs.tf                  VM MAC addresses, kubeconfig/talosconfig paths
 providers.tf                Provider configuration
@@ -274,6 +278,7 @@ Terraform will, in order:
    - The `homelab` AppProject
    - The `infrastructure` ApplicationSet
 9. Create the `operator-oauth` Secret in the `tailscale` namespace (if `tailscale_oauth_client_id` is set)
+10. Create the NFS server VM and configure its export (if `nfs_server` is set — see [NFS storage](#nfs-storage))
 
 ArgoCD immediately begins syncing the mono repo and deploying infrastructure in phase order.
 
@@ -346,6 +351,90 @@ bao kv put secret/cert-manager/cloudflare \
 ```
 
 Once the Cloudflare token is written, `cert-manager-config` syncs successfully and the Envoy Gateway gets its Let's Encrypt certificate.
+
+---
+
+## NFS storage
+
+The cluster mounts NFS through csi-driver-nfs (`infrastructure/csi-driver-nfs`
+in homelab-apps), for volumes shared between pods such as the media library
+used by sonarr, radarr, sabnzbd and plex. Where it comes from is per site:
+
+| Site | NFS storage | Configured in |
+|---|---|---|
+| site-a | Debian VM created here, data disk on the `media-vm` ZFS pool | `nfs_server` in `site-a.tfvars` |
+| site-b | Synology | the NAS itself; `nfs_server` stays unset |
+
+Either way, put the server and export path in `clusters/<site>/cluster.yaml`
+(`nfs.server`, `nfs.share`) in homelab-apps.
+
+### NFS server VM (site-a)
+
+Prerequisite: the ZFS pool is registered as Proxmox storage. **Datacenter →
+Storage → Add → ZFS**, ID `media-vm`, pool `media-vm`, content *Disk image*.
+`pvesm status` should list it.
+
+Add to `site-a.tfvars` (pick a free IP outside the DHCP range):
+
+```hcl
+nfs_server = {
+  vm_id        = 130
+  ip           = "192.168.178.130"
+  data_disk_gb = 2000   # size of the media disk (zvol) on media-vm
+}
+```
+
+Then `./scripts/tofu.sh apply`. Terraform downloads the Debian 13 cloud
+image, creates the VM with a static IP via cloud-init, and configures it over
+SSH:
+
+- formats the data disk XFS on first setup (never again) and mounts it at `/srv/nfs`
+- creates `/srv/nfs/media`, owned by `media_owner` (default `1000:1000`, the
+  `PUID`/`PGID` the media containers should run as)
+- exports `/srv/nfs` read-write to the node network with `no_root_squash`,
+  which csi-driver-nfs needs to create per-volume directories
+
+`./scripts/tofu.sh output nfs_export` prints the values for `cluster.yaml`.
+
+Growing the share: raise `data_disk_gb` and apply. Proxmox enlarges the
+zvol and Terraform re-runs the setup, which grows the filesystem. Shrinking
+isn't possible.
+
+To log in yourself, add your public key to `nfs_server.ssh_public_keys` and
+`ssh debian@<ip>`.
+
+### Synology (site-b)
+
+1. **Control Panel → File Services → NFS**: enable NFS, maximum protocol NFSv4.1.
+2. Create a shared folder (e.g. `k8s`). Its path is `/volume1/k8s`.
+3. Folder → **Edit → NFS Permissions → Create**:
+   - Hostname or IP: the node network, e.g. `192.168.1.0/24`
+   - Privilege: Read/Write
+   - Squash: **No mapping** (csi-driver-nfs creates volume directories as root)
+   - Security: `sys`; enable asynchronous; allow subfolder mounts
+4. Create `media` inside the folder and give the media containers' user
+   (default uid/gid 1000) write access to it.
+
+---
+
+## Growing worker disks
+
+`worker_disk_gb` (default 300) only grows. If your `<site>.tfvars` sets it,
+update it there, then:
+
+```bash
+./scripts/tofu.sh apply   # Proxmox resizes the disks in place
+```
+
+Talos grows the EPHEMERAL partition, which also holds the local-path
+volumes, into the new space when the node next boots. Reboot the workers one
+at a time:
+
+```bash
+export TALOSCONFIG=$(pwd)/talosconfig
+talosctl -n <worker-ip> reboot          # waits until the node is back
+talosctl -n <worker-ip> get volumestatus EPHEMERAL   # SIZE should be ~300 GB
+```
 
 ---
 

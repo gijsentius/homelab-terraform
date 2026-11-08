@@ -213,9 +213,14 @@ variable "worker_memory_mb" {
 }
 
 variable "worker_disk_gb" {
-  description = "Boot disk size in GB for worker nodes. Workers store container images, so give them room."
+  description = <<-EOT
+    Boot disk size in GB for worker nodes. Workers store container images and
+    local-path volumes (on the EPHEMERAL partition), so give them room. Can only
+    grow: Proxmox resizes the disk in place, and Talos grows EPHEMERAL into the
+    new space on the node's next boot.
+  EOT
   type        = number
-  default     = 50
+  default     = 300
 }
 
 # ============================================================
@@ -300,4 +305,44 @@ variable "reboot_vms" {
   EOT
   type        = bool
   default     = false
+}
+
+# ============================================================
+# NFS server (optional) — see nfs_server.tf
+# ============================================================
+
+variable "nfs_server" {
+  description = <<-EOT
+    Debian VM exporting a data disk over NFS for the cluster's csi-driver-nfs
+    StorageClasses. Leave null on sites that use other NFS storage (e.g. a
+    Synology).
+
+      vm_id, ip           Proxmox VM ID and static LAN IP (on the node network)
+      data_disk_gb        Size of the exported disk. Can only grow.
+      data_datastore_id   Proxmox storage for the data disk: the ZFS pool,
+                          registered under Datacenter → Storage
+      export_cidr         Clients allowed to mount; defaults to the node network
+      media_owner         uid:gid owning /srv/nfs/media, the shared media
+                          library (PUID/PGID of the media containers)
+      ssh_public_keys     Extra keys for the 'debian' user, for your own access
+  EOT
+  type = object({
+    vm_id             = number
+    ip                = string
+    data_disk_gb      = number
+    name              = optional(string, "nfs")
+    data_datastore_id = optional(string, "media-vm")
+    os_disk_gb        = optional(number, 16)
+    cpu_cores         = optional(number, 2)
+    memory_mb         = optional(number, 2048)
+    export_cidr       = optional(string)
+    media_owner       = optional(string, "1000:1000")
+    ssh_public_keys   = optional(list(string), [])
+  })
+  default = null
+
+  validation {
+    condition     = var.nfs_server == null || can(regex("^[0-9]+:[0-9]+$", var.nfs_server.media_owner))
+    error_message = "nfs_server.media_owner must be uid:gid, e.g. 1000:1000."
+  }
 }

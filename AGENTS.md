@@ -41,6 +41,8 @@ versions.tf                      # Provider version constraints
 providers.tf                     # Provider config (credentials via variables)
 variables.tf                     # All input variables with descriptions
 main.tf                          # Resources: ISO, VMs, Talos machine configs, bootstrap
+nfs_server.tf                    # Optional Debian NFS server VM (var.nfs_server), set up over SSH
+templates/nfs-server-setup.sh.tftpl  # Idempotent setup script for it (never reformats the data disk)
 outputs.tf                       # VM MAC addresses, paths to kubeconfig/talosconfig
 terraform.tfvars.example         # Template — copy to <site>.tfvars and fill in (no secrets)
 .sops.yaml                       # age public keys secrets.enc.yaml is encrypted to

@@ -33,3 +33,15 @@ output "talosconfig_path" {
   description = "Path to the generated talosconfig file (use with talosctl --talosconfig)"
   value       = "${path.module}/talosconfig${local.site_suffix}"
 }
+
+# ============================================================
+# NFS server
+# ============================================================
+
+output "nfs_export" {
+  description = "NFS server and export path for clusters/<site>/cluster.yaml (nfs.server / nfs.share) in homelab-apps. null when nfs_server isn't set."
+  value = var.nfs_server != null ? {
+    server = var.nfs_server.ip
+    share  = "/srv/nfs"
+  } : null
+}

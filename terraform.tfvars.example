@@ -81,7 +81,21 @@ control_plane_disk_gb   = 20
 
 worker_cpu_cores = 4
 worker_memory_mb = 8192
-worker_disk_gb   = 50
+worker_disk_gb   = 300  # grow-only; reboot workers afterwards (README)
+
+# ============================================================
+# NFS server (optional)
+# ============================================================
+# Debian VM exporting a disk on a Proxmox ZFS pool for csi-driver-nfs. Leave
+# unset on sites with other NFS storage (e.g. a Synology). The IP must be free
+# on the node network and outside the router's DHCP range. See variables.tf
+# for the optional fields.
+
+# nfs_server = {
+#   vm_id        = 130
+#   ip           = "192.168.1.130"
+#   data_disk_gb = 2000          # on the "media-vm" ZFS pool; grow-only
+# }
 
 # ============================================================
 # ArgoCD bootstrap

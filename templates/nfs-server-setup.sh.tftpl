@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Rendered by nfs_server.tf and run as root on the NFS server VM over SSH.
+# Safe to re-run: it never formats a disk that already has a filesystem.
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+# First boot: let cloud-init finish (apt sources, user, network) first.
+cloud-init status --wait >/dev/null || true
+
+apt-get update -q
+apt-get install -y -q nfs-kernel-server xfsprogs
+
+# Data disk: format only when blank, then mount by label at /srv/nfs.
+disk="${data_disk}"
+for _ in $(seq 30); do [[ -e "$disk" ]] && break; sleep 2; done
+if ! blkid "$disk" >/dev/null 2>&1; then
+  mkfs.xfs -L nfs-data "$disk"
+fi
+mkdir -p /srv/nfs
+if ! grep -q '^LABEL=nfs-data ' /etc/fstab; then
+  echo 'LABEL=nfs-data /srv/nfs xfs defaults,nofail 0 2' >> /etc/fstab
+fi
+systemctl daemon-reload
+mountpoint -q /srv/nfs || mount /srv/nfs
+# Pick up a data disk that was enlarged in Proxmox.
+xfs_growfs /srv/nfs >/dev/null
+
+# Shared media library (StorageClass nfs-media in homelab-apps), owned by
+# the uid:gid the media containers run as.
+mkdir -p /srv/nfs/media
+chown "${media_owner}" /srv/nfs/media
+
+# no_root_squash: csi-driver-nfs creates and removes per-volume directories
+# as root. Access is limited to the cluster network instead.
+mkdir -p /etc/exports.d
+cat > /etc/exports.d/k8s.exports <<EXPORTS
+/srv/nfs ${export_cidr}(rw,sync,no_subtree_check,no_root_squash)
+EXPORTS
+
+systemctl enable --now nfs-server
+exportfs -ra
+exportfs -v
