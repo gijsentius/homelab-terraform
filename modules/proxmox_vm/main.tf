@@ -33,8 +33,15 @@ resource "proxmox_virtual_environment_vm" "this" {
     discard = "on"
   }
 
-  # Talos ISO — mounted as a virtual CD-ROM for the initial boot
-  # After Talos installs itself to the disk, you can remove this (or leave it — Talos won't boot from it again)
+  # Disk first, ISO second. A new VM's disk is blank and not bootable, so it
+  # falls through to the ISO and installs; once installed, the disk wins.
+  # Without this Proxmox puts the CD-ROM first, and every full VM restart
+  # (e.g. the provider applying a memory change) boots the ISO, which halts
+  # with "Talos is already installed to disk but booted from another media".
+  boot_order = ["virtio0", "ide2"]
+
+  # Talos ISO — mounted as a virtual CD-ROM for the initial boot. Kept
+  # attached for reinstalls; boot_order above keeps it from being used.
   cdrom {
     file_id   = var.talos_iso_file_id
     interface = "ide2"
