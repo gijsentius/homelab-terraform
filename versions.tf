@@ -4,7 +4,8 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.100"
+      # 0.116+: import_from for the NFS server's cloud image (nfs_server.tf)
+      version = "~> 0.116"
     }
 
     # Writes files to the local filesystem (kubeconfig, talosconfig)

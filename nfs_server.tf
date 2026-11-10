@@ -35,17 +35,20 @@ locals {
   }) : null
 }
 
-# Debian cloud image, downloaded once to the ISO storage. Proxmox only accepts
-# .iso/.img there, hence the rename; the disk below imports it as qcow2.
+# Debian cloud image, downloaded once as an 'import' image. The disk below
+# imports it with import_from, which goes through the Proxmox API. (file_id
+# would run qm importdisk over SSH on the node instead.) Needs the Import
+# content type enabled on the storage: Datacenter → Storage → <storage> →
+# Content.
 resource "proxmox_download_file" "debian_cloud_image" {
   count = local.nfs_enabled ? 1 : 0
 
   node_name    = var.proxmox_node
-  content_type = "iso"
+  content_type = "import"
   datastore_id = var.proxmox_iso_datastore_id
 
   url       = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-  file_name = "debian-13-genericcloud-amd64.img"
+  file_name = "debian-13-genericcloud-amd64.qcow2"
   # 'latest' moves; keep the first download instead of replacing it (and
   # re-triggering a diff) every time Debian publishes a new build.
   overwrite = false
@@ -78,7 +81,7 @@ resource "proxmox_virtual_environment_vm" "nfs_server" {
 
   disk {
     datastore_id = var.proxmox_datastore_id
-    file_id      = proxmox_download_file.debian_cloud_image[0].id
+    import_from  = proxmox_download_file.debian_cloud_image[0].id
     interface    = "virtio0"
     size         = var.nfs_server.os_disk_gb
     discard      = "on"
@@ -139,7 +142,7 @@ resource "proxmox_virtual_environment_vm" "nfs_server" {
       network_device,
       # The image only matters on create; a re-downloaded image must not
       # replace the VM (and its data disk).
-      disk[0].file_id,
+      disk[0].import_from,
     ]
   }
 }

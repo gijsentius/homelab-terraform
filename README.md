@@ -370,9 +370,15 @@ Either way, put the server and export path in `clusters/<site>/cluster.yaml`
 
 ### NFS server VM (site-a)
 
-Prerequisite: the ZFS pool is registered as Proxmox storage. **Datacenter →
-Storage → Add → ZFS**, ID `media-vm`, pool `media-vm`, content *Disk image*.
-`pvesm status` should list it.
+Prerequisites in Proxmox:
+
+- The ZFS pool is registered as storage: **Datacenter → Storage → Add →
+  ZFS**, ID `media-vm`, pool `media-vm`, content *Disk image*. `pvesm status`
+  should list it.
+- The ISO storage (`proxmox_iso_datastore_id`, default `local`) allows the
+  **Import** content type: **Datacenter → Storage → local → Edit → Content**.
+  The Debian cloud image is downloaded there and imported through the API, so
+  the provider needs no SSH access to the node.
 
 Add to `site-a.tfvars` (pick a free IP outside the DHCP range):
 
