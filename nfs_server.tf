@@ -47,8 +47,8 @@ resource "proxmox_download_file" "debian_cloud_image" {
   content_type = "import"
   datastore_id = var.proxmox_iso_datastore_id
 
-  url       = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-  file_name = "debian-13-genericcloud-amd64.qcow2"
+  url       = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2"
+  file_name = "debian-13-generic-amd64.qcow2"
   # 'latest' moves; keep the first download instead of replacing it (and
   # re-triggering a diff) every time Debian publishes a new build.
   overwrite = false
