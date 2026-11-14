@@ -329,7 +329,8 @@ variable "nfs_server" {
       export_cidr         Clients allowed to mount; defaults to the node network
       media_owner         uid:gid owning /srv/nfs/media, the shared media
                           library (PUID/PGID of the media containers)
-      ssh_public_keys     Extra keys for the 'debian' user, for your own access
+      ssh_public_keys     Extra keys for the 'debian' user, for your own access;
+                          a change applies on the next apply (replaces authorized_keys)
       tailscale_tags      Tags the server joins the tailnet with, as
                           <name><site suffix> (nfs, nfs-b). Joins with the
                           tailscale-operator's OAuth client, so they must be

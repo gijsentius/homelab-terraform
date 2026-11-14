@@ -8,6 +8,18 @@ export DEBIAN_FRONTEND=noninteractive
 # First boot: let cloud-init finish (apt sources, user, network) first.
 cloud-init status --wait >/dev/null || true
 
+# Login keys for 'debian', managed here rather than only through cloud-init,
+# which applies them on first boot only. Replaces the file, so a key removed
+# from nfs_server.ssh_public_keys is revoked on the next apply. Terraform's
+# own key is always first; without it the provisioner can't log in.
+install -d -m 700 -o debian -g debian /home/debian/.ssh
+cat > /home/debian/.ssh/authorized_keys.new <<'KEYS'
+${ssh_authorized_keys}
+KEYS
+chown debian:debian /home/debian/.ssh/authorized_keys.new
+chmod 600 /home/debian/.ssh/authorized_keys.new
+mv /home/debian/.ssh/authorized_keys.new /home/debian/.ssh/authorized_keys
+
 apt-get update -q
 apt-get install -y -q nfs-kernel-server xfsprogs
 

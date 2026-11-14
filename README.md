@@ -442,7 +442,8 @@ zvol and Terraform re-runs the setup, which grows the filesystem. Shrinking
 isn't possible.
 
 To log in yourself, add your public key to `nfs_server.ssh_public_keys` and
-`ssh debian@<ip>`.
+`ssh debian@<ip>`. The setup writes `authorized_keys` from that list on every
+change, so adding or removing a key takes effect on the next apply, no reboot.
 
 **On the tailnet.** With `tailscale_oauth_client_id`/`_secret` set (the
 tailscale-operator's OAuth client), the setup also installs Tailscale and

@@ -34,6 +34,12 @@ locals {
     media_owner        = var.nfs_server.media_owner
     tailscale_hostname = "${var.nfs_server.name}${local.site_suffix}"
     tailscale_tags     = join(",", var.nfs_server.tailscale_tags)
+
+    # Terraform's own key first: the setup provisioner logs in with it.
+    ssh_authorized_keys = join("\n", concat(
+      [trimspace(tls_private_key.nfs_server[0].public_key_openssh)],
+      [for k in var.nfs_server.ssh_public_keys : trimspace(k)],
+    ))
   }) : null
 
   # The operator's OAuth client secret works as an auth key for tagged
