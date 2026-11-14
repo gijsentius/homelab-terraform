@@ -85,7 +85,14 @@ brew install opentofu talosctl kubectl gh sops age
 
 ### Proxmox
 
-A Proxmox VE host reachable on your LAN with an API token. Create one:
+A Proxmox VE **8.4 or later** host reachable on your LAN with an API token.
+8.4 is needed for the optional NFS server VM: its Debian cloud image is
+downloaded with the `import` content type, which older versions reject
+("value 'import' does not have a value in the enumeration 'iso, vztmpl'").
+Check with `pveversion`; on 8.x, `apt update && apt full-upgrade` and a
+reboot get you to the latest 8.4.
+
+Create the API token:
 
 1. Log in to Proxmox → **Datacenter → Permissions → API Tokens → Add**
 2. User: `root@pam`, Token ID: `terraform`, uncheck "Privilege Separation"
@@ -372,6 +379,7 @@ Either way, put the server and export path in `clusters/<site>/cluster.yaml`
 
 Prerequisites in Proxmox:
 
+- Proxmox VE 8.4 or later (`pveversion`), see [Proxmox](#proxmox).
 - The ZFS pool is registered as storage: **Datacenter → Storage → Add →
   ZFS**, ID `media-vm`, pool `media-vm`, content *Disk image*. `pvesm status`
   should list it.
