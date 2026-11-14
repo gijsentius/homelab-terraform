@@ -322,18 +322,45 @@ Once the secret exists, the operator registers itself (the Kubernetes API proxy)
 
 ## Step 6 — Unseal OpenBao and configure secrets
 
-OpenBao starts sealed on first deploy. Port-forward to it and initialise:
+OpenBao runs as 3 Raft replicas (`openbao-0..2`) and starts sealed. Port-forward
+to the first one and initialise it, once per cluster:
 
 ```bash
-kubectl port-forward -n openbao svc/openbao 8200 &
+kubectl port-forward -n openbao pod/openbao-0 8200 &
 export BAO_ADDR=http://localhost:8200
 
 # Initialise — prints 5 unseal keys and a root token
 # Store these somewhere safe (password manager)
 bao operator init
+```
 
-# Unseal — run 3 times, each time with a different key from the output above
-bao operator unseal
+**Unseal every replica.** Each pod is sealed on its own and needs 3 of the 5
+keys. This repeats after every pod restart (node reboot, upgrade), and a
+sealed pod stays not Ready. Each `bao operator unseal` prompts for one key;
+`raft list-peers` should then show 3 voters:
+
+```bash
+for pod in openbao-0 openbao-1 openbao-2; do
+  for i in 1 2 3; do
+    kubectl exec -it -n openbao "$pod" -- bao operator unseal
+  done
+done
+kubectl exec -n openbao openbao-0 -- bao operator raft list-peers
+```
+
+**Log in.** Unsealing doesn't authenticate you; without a token every request
+below fails with `403 permission denied`. `bao login` prompts for the root
+token from `bao operator init`:
+
+```bash
+bao login
+```
+
+Then configure it (once per cluster):
+
+```bash
+# KV v2 store at secret/ — only dev mode creates it automatically
+bao secrets enable -path=secret kv-v2
 
 # Enable Kubernetes auth so External Secrets Operator can read secrets
 bao auth enable kubernetes
