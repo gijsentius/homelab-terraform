@@ -386,6 +386,41 @@ bao kv put secret/cert-manager/cloudflare \
 
 Once the Cloudflare token is written, `cert-manager-config` syncs successfully and the Envoy Gateway gets its Let's Encrypt certificate.
 
+### Snapshots (backups)
+
+A CronJob (`openbao-snapshot`, enabled per site in homelab-apps
+`clusters/<site>/apps/openbao.yaml`) saves a Raft snapshot daily at 02:30 UTC
+to `s3://homelab-cnpg/openbao/<site>/` in R2 and deletes those older than 30
+days. It logs in with its own role, which may only read snapshots:
+
+```bash
+bao policy write snapshot - <<'EOF'
+path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+EOF
+
+bao write auth/kubernetes/role/snapshot \
+  bound_service_account_names=openbao-snapshot \
+  bound_service_account_namespaces=openbao \
+  policies=snapshot \
+  ttl=1h
+```
+
+Check it: `kubectl get jobs -n openbao`, and the logs of the last job.
+
+A snapshot is encrypted with the cluster's keys: **restoring needs the original
+unseal keys**, so keep them apart from the snapshots. To restore after losing
+OpenBao, download the latest snapshot from R2 (Cloudflare dashboard; the R2 key
+in OpenBao is gone too), then on a freshly initialised and unsealed OpenBao:
+
+```bash
+bao login
+bao operator raft snapshot restore -force bao_<date>.snapshot
+```
+
+`bao login` here uses the new cluster's root token. After the restore OpenBao
+seals again: unseal every pod with the **original** unseal keys, then log in
+with the original root token.
+
 ---
 
 ## NFS storage
