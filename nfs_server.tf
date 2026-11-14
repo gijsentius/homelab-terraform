@@ -14,10 +14,10 @@
 #            XFS on first setup and mounted at /srv/nfs
 #
 # Network and the login key are set through Proxmox cloud-init (no snippet
-# upload, so the API token is enough). Packages and exports are configured
-# over SSH by terraform_data.nfs_server_setup below, which re-runs whenever
-# the setup script or its inputs change. The script never reformats a disk
-# that already has a filesystem.
+# upload, so the API token is enough). Packages, exports and (optionally)
+# Tailscale are configured over SSH by terraform_data.nfs_server_setup below,
+# which re-runs whenever the setup script or its inputs change. The script
+# never reformats a disk that already has a filesystem.
 
 locals {
   nfs_enabled = var.nfs_server != null
@@ -29,10 +29,21 @@ locals {
   ) : null
 
   nfs_setup_script = local.nfs_enabled ? templatefile("${path.module}/templates/nfs-server-setup.sh.tftpl", {
-    data_disk   = "/dev/disk/by-id/virtio-nfs-data"
-    export_cidr = local.nfs_export_cidr
-    media_owner = var.nfs_server.media_owner
+    data_disk          = "/dev/disk/by-id/virtio-nfs-data"
+    export_cidr        = local.nfs_export_cidr
+    media_owner        = var.nfs_server.media_owner
+    tailscale_hostname = "${var.nfs_server.name}${local.site_suffix}"
+    tailscale_tags     = join(",", var.nfs_server.tailscale_tags)
   }) : null
+
+  # The operator's OAuth client secret works as an auth key for tagged
+  # devices; the parameters make it a permanent, pre-approved device (an
+  # OAuth secret otherwise registers an ephemeral one). Empty = don't join.
+  nfs_tailscale_auth_key = (
+    local.nfs_enabled && var.tailscale_oauth_client_secret != "" && length(try(var.nfs_server.tailscale_tags, [])) > 0
+    ? "${var.tailscale_oauth_client_secret}?ephemeral=false&preauthorized=true"
+    : ""
+  )
 }
 
 # Debian cloud image, downloaded once as an 'import' image. The disk below
@@ -168,6 +179,14 @@ resource "terraform_data" "nfs_server_setup" {
   provisioner "file" {
     content     = local.nfs_setup_script
     destination = "/tmp/nfs-server-setup.sh"
+  }
+
+  # Separate from the script so the secret isn't part of its hash (rotating
+  # it doesn't re-run setup) and doesn't show in the command line. The script
+  # reads it once to join the tailnet, then deletes it.
+  provisioner "file" {
+    content     = local.nfs_tailscale_auth_key
+    destination = "/tmp/tailscale-auth-key"
   }
 
   provisioner "remote-exec" {

@@ -444,6 +444,20 @@ isn't possible.
 To log in yourself, add your public key to `nfs_server.ssh_public_keys` and
 `ssh debian@<ip>`.
 
+**On the tailnet.** With `tailscale_oauth_client_id`/`_secret` set (the
+tailscale-operator's OAuth client), the setup also installs Tailscale and
+joins the server as `nfs` (`nfs-<site>` for other sites) with
+`nfs_server.tailscale_tags`, default `tag:k8s`. Then `ssh debian@nfs` works
+from tailnet devices your policy file allows to reach `tag:k8s`.
+
+- The client can only assign its own tags and tags they own. For a separate
+  tag, e.g. `tag:nfs`, add `"tag:nfs": ["tag:k8s"]` (or the client's tag) to
+  `tagOwners` first, then set `tailscale_tags = ["tag:nfs"]`.
+- It joins once; later runs leave the device alone. The secret is copied to
+  the VM only for that run and deleted afterwards.
+- `tailscale_tags = []` keeps the server off the tailnet.
+- The cluster still mounts NFS over the LAN, not the tailnet.
+
 ### Synology (site-b)
 
 1. **Control Panel → File Services → NFS**: enable NFS, maximum protocol NFSv4.1.

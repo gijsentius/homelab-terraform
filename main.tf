@@ -596,6 +596,13 @@ resource "kubernetes_namespace" "tailscale" {
     name = "tailscale"
   }
 
+  # Argo CD also manages this namespace (homelab-apps
+  # infrastructure/tailscale-operator/templates/namespace.yaml sets its Pod
+  # Security label). Without this, every apply would strip that label.
+  lifecycle {
+    ignore_changes = [metadata[0].labels, metadata[0].annotations]
+  }
+
   depends_on = [local_file.kubeconfig, data.talos_cluster_health.this]
 }
 

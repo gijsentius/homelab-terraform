@@ -41,3 +41,26 @@ EXPORTS
 systemctl enable --now nfs-server
 exportfs -ra
 exportfs -v
+
+# Tailscale, for SSH/admin access from the tailnet. Installed always (cheap,
+# and ready if a key is added later); only joins when a key was uploaded
+# (the operator's OAuth client secret) and the node isn't logged in yet, so
+# re-runs never re-register.
+auth_key_file=/tmp/tailscale-auth-key
+if ! command -v tailscale >/dev/null; then
+  apt-get install -y -q curl ca-certificates
+  . /etc/os-release
+  curl -fsSL "https://pkgs.tailscale.com/stable/debian/$VERSION_CODENAME.noarmor.gpg" \
+    -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  curl -fsSL "https://pkgs.tailscale.com/stable/debian/$VERSION_CODENAME.tailscale-keyring.list" \
+    -o /etc/apt/sources.list.d/tailscale.list
+  apt-get update -q
+  apt-get install -y -q tailscale
+fi
+systemctl enable --now tailscaled
+if [[ -s "$auth_key_file" ]] && ! tailscale status >/dev/null 2>&1; then
+  tailscale up --auth-key="file:$auth_key_file" \
+    --hostname="${tailscale_hostname}" --advertise-tags="${tailscale_tags}"
+fi
+rm -f "$auth_key_file"
+tailscale status --self --peers=false || true

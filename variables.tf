@@ -330,6 +330,12 @@ variable "nfs_server" {
       media_owner         uid:gid owning /srv/nfs/media, the shared media
                           library (PUID/PGID of the media containers)
       ssh_public_keys     Extra keys for the 'debian' user, for your own access
+      tailscale_tags      Tags the server joins the tailnet with, as
+                          <name><site suffix> (nfs, nfs-b). Joins with the
+                          tailscale-operator's OAuth client, so they must be
+                          tags that client may assign: tag:k8s is (its own tag,
+                          or owned by tag:k8s-operator). [] keeps it off the
+                          tailnet, as does an empty tailscale_oauth_client_secret.
   EOT
   type = object({
     vm_id             = number
@@ -343,6 +349,7 @@ variable "nfs_server" {
     export_cidr       = optional(string)
     media_owner       = optional(string, "1000:1000")
     ssh_public_keys   = optional(list(string), [])
+    tailscale_tags    = optional(list(string), ["tag:k8s"])
   })
   default = null
 
